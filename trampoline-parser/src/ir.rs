@@ -168,6 +168,8 @@ pub enum PostfixOp {
         close: Box<Combinator>,
         /// Argument separator (e.g., Literal(","))
         separator: Box<Combinator>,
+        /// Optional rule name for parsing arguments (if None, uses ParseOperand)
+        arg_rule: Option<String>,
         precedence: u8,
         mapping: String,
     },

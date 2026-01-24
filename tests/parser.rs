@@ -3,8 +3,8 @@
 //! These tests verify that the parser correctly parses TypeScript/JavaScript source into AST.
 
 use tsrun::ast::{
-    ClassMember, Expression, ForInit, MemberProperty, MethodKind, ObjectPropertyKey, Program,
-    Statement,
+    Argument, ClassMember, Expression, ForInit, MemberProperty, MethodKind, ObjectPropertyKey,
+    Program, Statement,
 };
 use tsrun::parser::Parser;
 use tsrun::string_dict::StringDict;
@@ -463,6 +463,22 @@ fn test_array_destructuring() {
 fn test_spread_operator() {
     let prog = parse("const combined: number[] = [...arr1, ...arr2];");
     assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_spread_in_function_call() {
+    let prog = parse("sum(...args);");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::Expression(expr_stmt) = &prog.body[0] {
+        if let Expression::Call(call) = expr_stmt.expression.as_ref() {
+            assert_eq!(call.arguments.len(), 1);
+            assert!(matches!(call.arguments[0], Argument::Spread(_)));
+        } else {
+            panic!("Expected call expression");
+        }
+    } else {
+        panic!("Expected expression statement");
+    }
 }
 
 #[test]

@@ -232,6 +232,7 @@ fn postfix_op_equal(op1: &PostfixOp, op2: &PostfixOp) -> bool {
                 open: o1,
                 close: c1,
                 separator: s1,
+                arg_rule: ar1,
                 precedence: prec1,
                 mapping: m1,
             },
@@ -239,12 +240,14 @@ fn postfix_op_equal(op1: &PostfixOp, op2: &PostfixOp) -> bool {
                 open: o2,
                 close: c2,
                 separator: s2,
+                arg_rule: ar2,
                 precedence: prec2,
                 mapping: m2,
             },
         ) => {
             prec1 == prec2
                 && m1 == m2
+                && ar1 == ar2
                 && combinators_equal(o1, o2)
                 && combinators_equal(c1, c2)
                 && combinators_equal(s1, s2)

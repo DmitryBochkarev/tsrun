@@ -2566,15 +2566,24 @@ impl<'a> CodeGenerator<'a> {
                     self.indent += 1;
                     // Check for close paren (empty args)
                     self.line("let close_checkpoint = self.pos;");
-                    // Get the close delimiter from the first Call op found
+                    // Get the close delimiter and arg_rule from the first Call op found
                     let mut close_lit = ")".to_string();
+                    let mut arg_rule: Option<String> = None;
                     for postfix_op in pratt.postfix_ops.iter() {
-                        if let crate::ir::PostfixOp::Call { close, .. } = postfix_op {
+                        if let crate::ir::PostfixOp::Call {
+                            close,
+                            arg_rule: rule,
+                            ..
+                        } = postfix_op
+                        {
                             let (lit, _, _) = extract_operator_pattern(close.as_ref());
                             if !lit.is_empty() {
                                 close_lit = lit;
-                                break;
                             }
+                            if rule.is_some() {
+                                arg_rule = rule.clone();
+                            }
+                            break;
                         }
                     }
                     self.line(&format!(
@@ -2595,10 +2604,19 @@ impl<'a> CodeGenerator<'a> {
                         "self.work_stack.push(Work::{}PostfixCallSep {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }});",
                         prefix
                     ));
-                    self.line(&format!(
-                        "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: 0, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
-                        prefix
-                    ));
+                    // Use arg_rule if specified, otherwise use ParseOperand
+                    if let Some(ref rule_name) = arg_rule {
+                        let rule_prefix = to_pascal_case(rule_name);
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}Start {{ result_base: self.result_stack.len() }});",
+                            rule_prefix
+                        ));
+                    } else {
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: 0, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                            prefix
+                        ));
+                    }
                     self.indent -= 1;
                     self.line("}");
                     self.indent -= 1;
@@ -2632,10 +2650,19 @@ impl<'a> CodeGenerator<'a> {
                         "self.work_stack.push(Work::{}PostfixCallSep {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }});",
                         prefix
                     ));
-                    self.line(&format!(
-                        "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: 0, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
-                        prefix
-                    ));
+                    // Use arg_rule if specified, otherwise use ParseOperand
+                    if let Some(ref rule_name) = arg_rule {
+                        let rule_prefix = to_pascal_case(rule_name);
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}Start {{ result_base: self.result_stack.len() }});",
+                            rule_prefix
+                        ));
+                    } else {
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: 0, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                            prefix
+                        ));
+                    }
                     self.indent -= 1;
                     self.line(&format!(
                         "}} else if self.try_consume(\"{}\") {{",

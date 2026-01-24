@@ -476,6 +476,30 @@ impl PrattBuilder {
             open: Box::new(Combinator::Literal(open.to_string())),
             close: Box::new(Combinator::Literal(close.to_string())),
             separator: Box::new(Combinator::Literal(separator.to_string())),
+            arg_rule: None,
+            precedence,
+            mapping: mapping.to_string(),
+        });
+        self
+    }
+
+    /// Define a call expression postfix with a custom argument rule: callee(args)
+    /// The arg_rule is used to parse each argument (e.g., to support spread)
+    /// Example: `ops.postfix_call_with_arg_rule("(", ")", ",", "call_argument", 18, "|callee, args| call(callee, args)")`
+    pub fn postfix_call_with_arg_rule(
+        mut self,
+        open: &str,
+        close: &str,
+        separator: &str,
+        arg_rule: &str,
+        precedence: u8,
+        mapping: &str,
+    ) -> Self {
+        self.postfix_ops.push(PostfixOp::Call {
+            open: Box::new(Combinator::Literal(open.to_string())),
+            close: Box::new(Combinator::Literal(close.to_string())),
+            separator: Box::new(Combinator::Literal(separator.to_string())),
+            arg_rule: Some(arg_rule.to_string()),
             precedence,
             mapping: mapping.to_string(),
         });

@@ -340,7 +340,7 @@ fn conditional(test: ParseResult, cons: ParseResult, alt: ParseResult, span: Spa
 /// Create call expression
 fn call(callee: ParseResult, args: Vec<ParseResult>, optional: bool, span: Span) -> Result<ParseResult, ParseError> {
     let arguments = args.into_iter()
-        .map(|a| Ok(Argument::Expression(to_expr(a)?)))
+        .map(|a| parse_result_to_argument(a))
         .collect::<Result<Vec<_>, ParseError>>()?;
     Ok(ParseResult::Expr(Expression::Call(Box::new(CallExpression {
         callee: Rc::new(to_expr(callee)?),
@@ -349,6 +349,37 @@ fn call(callee: ParseResult, args: Vec<ParseResult>, optional: bool, span: Span)
         optional,
         span,
     }))))
+}
+
+/// Convert ParseResult to Argument (handles spread)
+fn parse_result_to_argument(result: ParseResult) -> Result<Argument, ParseError> {
+    match result {
+        ParseResult::Expr(e) => Ok(Argument::Expression(e)),
+        // Spread: List([spread_op, expr]) where spread_op is List([literal, ws]) from op(r, "...")
+        // The key is that spread_op is a List, while regular expressions are Expr
+        ParseResult::List(items) if items.len() == 2 => {
+            let mut iter = items.into_iter();
+            let first = iter.next();
+            let second = iter.next();
+            // If first item is a List, it's the spread operator from op(r, "...")
+            let is_spread = matches!(&first, Some(ParseResult::List(_)));
+            if is_spread {
+                if let Some(expr_result) = second {
+                    let expr = to_expr(expr_result)?;
+                    return Ok(Argument::Spread(SpreadElement {
+                        argument: Rc::new(expr),
+                        span: Span { start: 0, end: 0, line: 0, column: 0 },
+                    }));
+                }
+            }
+            // Not a spread, try to convert to expression
+            Err(ParseError::new("Expected argument".to_string(), 0, 0))
+        }
+        other => {
+            // Try to convert to expression
+            Ok(Argument::Expression(to_expr(other)?))
+        }
+    }
 }
 
 /// Create member expression (property is JsString from postfix_member)
@@ -3857,8 +3888,9 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                     "|e, s| non_null(e, s)",
                 )
                 // Call expressions (optional chaining first to match longer pattern)
-                .postfix_call("?.(", ")", ",", 18, "|c, a, s| call(c, a, true, s)")
-                .postfix_call("(", ")", ",", 18, "|c, a, s| call(c, a, false, s)")
+                // Use argument rule to support spread in function calls
+                .postfix_call_with_arg_rule("?.(", ")", ",", "argument", 18, "|c, a, s| call(c, a, true, s)")
+                .postfix_call_with_arg_rule("(", ")", ",", "argument", 18, "|c, a, s| call(c, a, false, s)")
                 // Member access (optional chaining first to match longer pattern)
                 .postfix_member("?.", 18, "|o, p, s| member(o, p, true, s)")
                 .postfix_member(".", 18, "|o, p, s| member(o, p, false, s)")
