@@ -258,6 +258,15 @@ fn to_ident(result: ParseResult) -> Result<Identifier, ParseError> {
     }
 }
 
+/// Strip quotes from a string literal value
+fn strip_string_quotes(s: &str) -> &str {
+    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
+        s.get(1..s.len().saturating_sub(1)).unwrap_or("")
+    } else {
+        s
+    }
+}
+
 /// Extract Pattern from ParseResult
 fn to_pattern(result: ParseResult) -> Result<Pattern, ParseError> {
     match result {
@@ -735,6 +744,178 @@ fn create_object_expr(result: ParseResult, span: Span) -> Result<ParseResult, Pa
     })))
 }
 
+/// Parse export specifier from ParseResult
+/// Expected format: List([identifier, Optional(List([as, identifier]))])
+fn parse_export_specifier(result: ParseResult, span: Span) -> Option<ExportSpecifier> {
+    if let ParseResult::List(parts) = result {
+        let mut iter = parts.into_iter();
+        let local_part = iter.next()?;
+        let as_part = iter.next();
+
+        let local = if let ParseResult::Ident(id) = local_part {
+            id
+        } else {
+            return None;
+        };
+
+        // Check for "as exported" part
+        let exported = if let Some(ParseResult::List(as_parts)) = as_part {
+            // [as, identifier]
+            as_parts.into_iter().nth(1).and_then(|id| {
+                if let ParseResult::Ident(ident) = id {
+                    Some(ident)
+                } else {
+                    None
+                }
+            }).unwrap_or_else(|| local.clone())
+        } else {
+            local.clone()
+        };
+
+        Some(ExportSpecifier { local, exported, span })
+    } else {
+        None
+    }
+}
+
+/// Parse import clause into Vec<ImportSpecifier>
+/// import_clause can be:
+/// - List([*, as, Ident]) - namespace import
+/// - List([{, List([specifiers]), }]) - named imports
+/// - List([Ident, Optional(List([,, rest]))]) - default import with optional rest
+fn parse_import_clause(clause: ParseResult, span: Span) -> Vec<ImportSpecifier> {
+    if let ParseResult::List(parts) = clause {
+        parse_import_clause_parts(parts, span)
+    } else {
+        vec![]
+    }
+}
+
+/// Parse import clause parts into Vec<ImportSpecifier>
+fn parse_import_clause_parts(parts: Vec<ParseResult>, span: Span) -> Vec<ImportSpecifier> {
+    let mut specifiers = vec![];
+    let len = parts.len();
+
+    // Check for namespace import: [*, as, Ident]
+    // The * is captured as None, then 'as' is None, then Ident
+    if len == 3 {
+        let mut iter = parts.clone().into_iter();
+        let first = iter.next();
+        let _second = iter.next();
+        let third = iter.next();
+
+        // If third is an Ident and first is None (from *), this is namespace import
+        if let Some(ParseResult::Ident(id)) = third {
+            if matches!(first, Some(ParseResult::None)) {
+                specifiers.push(ImportSpecifier::Namespace {
+                    local: id,
+                    span: span.clone(),
+                });
+                return specifiers;
+            }
+        }
+
+        // Check for named imports: [{, List([specifiers]), }]
+        let mut iter = parts.clone().into_iter();
+        let _first = iter.next();
+        let second = iter.next();
+
+        if let Some(ParseResult::List(spec_list)) = second {
+            // Named imports
+            for spec in spec_list {
+                if let Some(is) = parse_import_specifier(spec, span.clone()) {
+                    specifiers.push(is);
+                }
+            }
+            return specifiers;
+        }
+    }
+
+    // Default import with optional rest: [Ident, Optional(...)]
+    if len == 2 {
+        let mut iter = parts.into_iter();
+        let first = iter.next();
+        let second = iter.next();
+
+        if let Some(ParseResult::Ident(id)) = first {
+            specifiers.push(ImportSpecifier::Default {
+                local: id,
+                span: span.clone(),
+            });
+
+            // Check for rest part: List([,, rest_clause])
+            if let Some(ParseResult::List(rest_parts)) = second {
+                // rest_parts is [comma, import_clause_rest]
+                if let Some(rest_clause) = rest_parts.into_iter().nth(1) {
+                    let rest_specifiers = parse_import_clause(rest_clause, span);
+                    specifiers.extend(rest_specifiers);
+                }
+            }
+        }
+    }
+
+    specifiers
+}
+
+/// Parse a single import specifier: [Ident, Optional(List([as, Ident]))]
+fn parse_import_specifier(spec: ParseResult, span: Span) -> Option<ImportSpecifier> {
+    if let ParseResult::List(parts) = spec {
+        let mut iter = parts.into_iter();
+        let imported_part = iter.next()?;
+        let as_part = iter.next();
+
+        let imported = if let ParseResult::Ident(id) = imported_part {
+            id
+        } else {
+            return None;
+        };
+
+        // Check for "as local" part
+        let local = if let Some(ParseResult::List(as_parts)) = as_part {
+            // [as, identifier]
+            as_parts.into_iter().nth(1).and_then(|id| {
+                if let ParseResult::Ident(ident) = id {
+                    Some(ident)
+                } else {
+                    None
+                }
+            }).unwrap_or_else(|| imported.clone())
+        } else {
+            imported.clone()
+        };
+
+        Some(ImportSpecifier::Named {
+            local,
+            imported,
+            span,
+        })
+    } else {
+        None
+    }
+}
+
+/// Parse decorators from ParseResult
+/// Decorators come as a List of List([@ op, expression])
+fn parse_decorators(decorators: ParseResult, span: Span) -> Vec<Decorator> {
+    let mut result = vec![];
+    if let ParseResult::List(decorator_list) = decorators {
+        for dec in decorator_list {
+            if let ParseResult::List(parts) = dec {
+                // Each decorator is [@, expression]
+                if let Some(expr_part) = parts.into_iter().nth(1) {
+                    if let Ok(expr) = to_expr(expr_part) {
+                        result.push(Decorator {
+                            expression: expr,
+                            span: span.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
 /// Convert ParseResult to ObjectProperty
 fn parse_result_to_object_property(result: ParseResult, span: Span) -> Option<ObjectProperty> {
     match result {
@@ -1057,13 +1238,16 @@ fn create_class_decl(
         _ => ClassBody { members: vec![], span: span.clone() },
     };
 
+    // Parse decorators
+    let parsed_decorators = parse_decorators(decorators, span.clone());
+
     Ok(ParseResult::Stmt(Statement::ClassDeclaration(Box::new(ClassDeclaration {
         id,
         type_parameters: None,
         super_class,
         implements: vec![],
         body: class_body,
-        decorators: vec![],
+        decorators: parsed_decorators,
         abstract_: is_abstract,
         span,
     }))))
@@ -2583,7 +2767,39 @@ fn rule_import_declaration(r: &RuleBuilder) -> Combinator {
         r.parse("string_literal"),
         r.parse("ws"),
         r.parse("semicolon"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [import, type?, import_clause, from, string, ws, semicolon]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _import = iter.next();
+            let type_part = iter.next();
+            let clause_part = iter.next().unwrap_or(ParseResult::None);
+            let _from = iter.next();
+            let string_part = iter.next().unwrap_or(ParseResult::None);
+
+            let type_only = !matches!(type_part, Some(ParseResult::None) | None);
+
+            // Parse source string
+            let source = if let ParseResult::Text(value, sp) = string_part {
+                let stripped = strip_string_quotes(value.as_ref());
+                StringLiteral { value: stripped.into(), span: sp }
+            } else {
+                return Err(ParseError::new(\"Expected import source string\".to_string(), 0, 0));
+            };
+
+            // Parse import clause into specifiers
+            let specifiers = parse_import_clause(clause_part, span.clone());
+
+            Ok(ParseResult::Stmt(Statement::Import(Box::new(ImportDeclaration {
+                specifiers,
+                source,
+                type_only,
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected import declaration parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_import_clause(r: &RuleBuilder) -> Combinator {
@@ -2621,32 +2837,195 @@ fn rule_import_specifier(r: &RuleBuilder) -> Combinator {
 
 fn rule_export_declaration(r: &RuleBuilder) -> Combinator {
     r.choice((
+        // Variant 1: export default expression/declaration
         r.sequence((
             kw(r, "export"),
-            kw(r, "default"),
+            r.capture(r.lit("default")),  // Capture "default" to distinguish from variant 4
+            r.parse("ws"),
             r.parse("export_default_expression"),
-        )),
+        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+            // [export, \"default\", ws, expr/stmt]
+            if let ParseResult::List(parts) = result {
+                let decl_part = parts.into_iter().nth(3).unwrap_or(ParseResult::None);
+                let declaration = match decl_part {
+                    ParseResult::Stmt(s) => Some(Box::new(s)),
+                    ParseResult::Expr(e) => Some(Box::new(Statement::Expression(ExpressionStatement {
+                        expression: Rc::new(e),
+                        span: span.clone(),
+                    }))),
+                    ParseResult::List(inner) => {
+                        // expression + semicolon case
+                        if let Some(ParseResult::Expr(e)) = inner.into_iter().next() {
+                            Some(Box::new(Statement::Expression(ExpressionStatement {
+                                expression: Rc::new(e),
+                                span: span.clone(),
+                            })))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                Ok(ParseResult::Stmt(Statement::Export(Box::new(ExportDeclaration {
+                    declaration,
+                    specifiers: vec![],
+                    source: None,
+                    namespace_export: None,
+                    default: true,
+                    type_only: false,
+                    span,
+                }))))
+            } else {
+                Err(ParseError::new(\"Expected export default parts\".to_string(), 0, 0))
+            }
+        }"),
+        // Variant 2: export { named } from "source"
         r.sequence((
             kw(r, "export"),
             r.optional(kw(r, "type")),
             r.parse("named_exports"),
             r.optional(r.sequence((kw(r, "from"), r.parse("string_literal"), r.parse("ws")))),
             r.parse("semicolon"),
-        )),
+        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+            // [export, type?, named_exports, (from, string, ws)?, semicolon]
+            if let ParseResult::List(parts) = result {
+                let mut iter = parts.into_iter();
+                let _export = iter.next();
+                let type_part = iter.next();
+                let named_part = iter.next().unwrap_or(ParseResult::None);
+                let from_part = iter.next().unwrap_or(ParseResult::None);
+
+                let type_only = !matches!(type_part, Some(ParseResult::None) | None);
+
+                // Parse named exports: List([{, List([specifiers]), }])
+                let mut specifiers = vec![];
+                if let ParseResult::List(named_parts) = named_part {
+                    if let Some(ParseResult::List(spec_list)) = named_parts.into_iter().nth(1) {
+                        for spec in spec_list {
+                            if let Some(es) = parse_export_specifier(spec, span.clone()) {
+                                specifiers.push(es);
+                            }
+                        }
+                    }
+                }
+
+                // Parse optional source (strip quotes)
+                let source = if let ParseResult::List(from_parts) = from_part {
+                    // [from, string_literal, ws]
+                    from_parts.into_iter().nth(1).and_then(|s| {
+                        if let ParseResult::Text(value, sp) = s {
+                            let stripped = strip_string_quotes(value.as_ref());
+                            Some(StringLiteral { value: stripped.into(), span: sp })
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                };
+
+                Ok(ParseResult::Stmt(Statement::Export(Box::new(ExportDeclaration {
+                    declaration: None,
+                    specifiers,
+                    source,
+                    namespace_export: None,
+                    default: false,
+                    type_only,
+                    span,
+                }))))
+            } else {
+                Err(ParseError::new(\"Expected named export parts\".to_string(), 0, 0))
+            }
+        }"),
+        // Variant 3: export [type] * as ns from "source"
         r.sequence((
             kw(r, "export"),
+            r.optional(kw(r, "type")),
             op(r, "*"),
             r.optional(r.sequence((kw(r, "as"), r.parse("identifier")))),
             kw(r, "from"),
             r.parse("string_literal"),
             r.parse("ws"),
             r.parse("semicolon"),
-        )),
+        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+            // [export, type?, *, (as, ident)?, from, string, ws, semicolon]
+            if let ParseResult::List(parts) = result {
+                let mut iter = parts.into_iter();
+                let _export = iter.next();
+                let type_part = iter.next();
+                let _star = iter.next();
+                let as_part = iter.next().unwrap_or(ParseResult::None);
+                let _from = iter.next();
+                let string_part = iter.next().unwrap_or(ParseResult::None);
+
+                let type_only = !matches!(type_part, Some(ParseResult::None) | None);
+
+                // Parse optional namespace identifier
+                let namespace_export = if let ParseResult::List(as_parts) = as_part {
+                    as_parts.into_iter().nth(1).and_then(|id| {
+                        if let ParseResult::Ident(ident) = id {
+                            Some(ident)
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                };
+
+                // Parse source string (strip quotes)
+                let source = if let ParseResult::Text(value, sp) = string_part {
+                    let stripped = strip_string_quotes(value.as_ref());
+                    Some(StringLiteral { value: stripped.into(), span: sp })
+                } else {
+                    None
+                };
+
+                Ok(ParseResult::Stmt(Statement::Export(Box::new(ExportDeclaration {
+                    declaration: None,
+                    specifiers: vec![],
+                    source,
+                    namespace_export,
+                    default: false,
+                    type_only,
+                    span,
+                }))))
+            } else {
+                Err(ParseError::new(\"Expected namespace export parts\".to_string(), 0, 0))
+            }
+        }"),
+        // Variant 4: export declaration
         r.sequence((
             kw(r, "export"),
             r.optional(kw(r, "type")),
             r.parse("exportable_declaration"),
-        )),
+        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+            // [export, type?, declaration]
+            if let ParseResult::List(parts) = result {
+                let mut iter = parts.into_iter();
+                let _export = iter.next();
+                let type_part = iter.next();
+                let decl_part = iter.next().unwrap_or(ParseResult::None);
+
+                let type_only = !matches!(type_part, Some(ParseResult::None) | None);
+                let declaration = match decl_part {
+                    ParseResult::Stmt(s) => Some(Box::new(s)),
+                    _ => None,
+                };
+
+                Ok(ParseResult::Stmt(Statement::Export(Box::new(ExportDeclaration {
+                    declaration,
+                    specifiers: vec![],
+                    source: None,
+                    namespace_export: None,
+                    default: false,
+                    type_only,
+                    span,
+                }))))
+            } else {
+                Err(ParseError::new(\"Expected export declaration parts\".to_string(), 0, 0))
+            }
+        }"),
     ))
 }
 
@@ -2681,6 +3060,7 @@ fn rule_exportable_declaration(r: &RuleBuilder) -> Combinator {
         r.parse("type_alias_declaration"),
         r.parse("interface_declaration"),
         r.parse("enum_declaration"),
+        r.parse("namespace_declaration"),
     ))
 }
 
@@ -3631,7 +4011,7 @@ fn rule_property_signature(r: &RuleBuilder) -> Combinator {
         r.parse("property_key"),
         r.optional(op(r, "?")),
         r.optional(r.parse("type_annotation")),
-        r.parse("type_member_separator"),
+        r.optional(r.optional(r.parse("type_member_separator"))),
     ))
 }
 
@@ -3644,7 +4024,7 @@ fn rule_method_signature(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("parameter_list")),
         op(r, ")"),
         r.optional(r.parse("type_annotation")),
-        r.parse("type_member_separator"),
+        r.optional(r.parse("type_member_separator")),
     ))
 }
 
@@ -3658,7 +4038,7 @@ fn rule_index_signature(r: &RuleBuilder) -> Combinator {
         op(r, "]"),
         op(r, ":"),
         r.parse("type"),
-        r.parse("type_member_separator"),
+        r.optional(r.parse("type_member_separator")),
     ))
 }
 
@@ -3669,7 +4049,7 @@ fn rule_call_signature(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("parameter_list")),
         op(r, ")"),
         r.optional(r.parse("type_annotation")),
-        r.parse("type_member_separator"),
+        r.optional(r.parse("type_member_separator")),
     ))
 }
 
@@ -3681,7 +4061,7 @@ fn rule_construct_signature(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("parameter_list")),
         op(r, ")"),
         r.optional(r.parse("type_annotation")),
-        r.parse("type_member_separator"),
+        r.optional(r.parse("type_member_separator")),
     ))
 }
 
