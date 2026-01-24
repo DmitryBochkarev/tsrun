@@ -41,6 +41,28 @@ fn test_exponentiation() {
     assert_eq!(prog.body.len(), 1);
 }
 
+#[test]
+fn test_nested_object_literal() {
+    // Test object in variable
+    let prog = parse("const x = { name: 'Bob' };");
+    assert_eq!(prog.body.len(), 1, "object in var should work");
+
+    // Test simple parenthesized expression
+    let prog = parse("(1);");
+    println!("paren number: {} statements", prog.body.len());
+    assert_eq!(prog.body.len(), 1, "paren number should work");
+
+    // Test empty object in parens
+    let prog = parse("({});");
+    println!("empty object: {} statements", prog.body.len());
+    assert_eq!(prog.body.len(), 1, "empty object should work");
+
+    // Test parenthesized object
+    let prog = parse("({ name: 'Bob' });");
+    println!("parenthesized object: {} statements", prog.body.len());
+    assert_eq!(prog.body.len(), 1, "parenthesized object should work");
+}
+
 // Regression: parenthesized expression
 #[test]
 fn test_parenthesized_expression() {
@@ -49,6 +71,37 @@ fn test_parenthesized_expression() {
         println!("Statement {}: {:?}", i, stmt);
     }
     assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_generator_function_declaration() {
+    // Normal function
+    let prog = parse("function gen() { }");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::FunctionDeclaration(f) = &prog.body[0] {
+        assert!(!f.generator);
+    } else {
+        panic!("Expected FunctionDeclaration");
+    }
+
+    // Generator function
+    let prog = parse("function* gen() { yield 1; }");
+    assert_eq!(prog.body.len(), 1, "generator should parse");
+    if let Statement::FunctionDeclaration(f) = &prog.body[0] {
+        assert!(f.generator, "generator flag should be true");
+        assert_eq!(f.id.as_ref().map(|i| i.name.as_ref()), Some("gen"));
+    } else {
+        panic!("Expected FunctionDeclaration, got {:?}", prog.body[0]);
+    }
+
+    // Generator with type annotation
+    let prog = parse("function* gen(): Generator<number> { yield 1; }");
+    assert_eq!(prog.body.len(), 1, "generator with type annotation should parse");
+    if let Statement::FunctionDeclaration(f) = &prog.body[0] {
+        assert!(f.generator);
+    } else {
+        panic!("Expected FunctionDeclaration, got {:?}", prog.body[0]);
+    }
 }
 
 // Regression: as type assertion

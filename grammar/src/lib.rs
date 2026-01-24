@@ -710,6 +710,323 @@ fn parse_result_to_array_element(result: ParseResult) -> Option<ArrayElement> {
     }
 }
 
+/// Create object expression from parsed object_expression result
+fn create_object_expr(result: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    // result is ["{", optional(separated_by_trailing), "}"]
+    let mut properties: Vec<ObjectProperty> = Vec::new();
+
+    if let ParseResult::List(parts) = result {
+        // parts = [open_brace, optional_content, close_brace]
+        if let Some(content) = parts.into_iter().nth(1) {
+            // separated_by_trailing returns a List of items (without separators)
+            if let ParseResult::List(items) = content {
+                for item in items {
+                    if let Some(prop) = parse_result_to_object_property(item, span.clone()) {
+                        properties.push(prop);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(ParseResult::Expr(Expression::Object(ObjectExpression {
+        properties,
+        span,
+    })))
+}
+
+/// Convert ParseResult to ObjectProperty
+fn parse_result_to_object_property(result: ParseResult, span: Span) -> Option<ObjectProperty> {
+    match result {
+        // Identifier = shorthand property
+        ParseResult::Ident(id) => {
+            Some(ObjectProperty::Property(Box::new(Property {
+                key: ObjectPropertyKey::Identifier(id.clone()),
+                value: Expression::Identifier(id),
+                kind: PropertyKind::Init,
+                computed: false,
+                shorthand: true,
+                method: false,
+                span,
+            })))
+        }
+        ParseResult::List(items) => {
+            let len = items.len();
+            // Check for spread: ["...", expression]
+            if len == 2 {
+                // Check if first is the spread operator (peek without consuming)
+                let is_spread = match items.first() {
+                    Some(ParseResult::Text(s, _)) => s.as_ref() == "...",
+                    _ => false,
+                };
+                if is_spread {
+                    let mut iter = items.into_iter();
+                    let _spread_op = iter.next()?;
+                    let second = iter.next()?;
+                    if let Ok(expr) = to_expr(second) {
+                        return Some(ObjectProperty::Spread(SpreadElement {
+                            argument: Rc::new(expr),
+                            span,
+                        }));
+                    }
+                    return None;
+                }
+                // Not a spread, fall through to other checks
+            }
+            // Check for key-value: [property_key, ":", expression]
+            if len == 3 {
+                let mut iter = items.into_iter();
+                let key_result = iter.next()?;
+                let _colon = iter.next()?; // skip ":"
+                let value_result = iter.next()?;
+
+                let key = parse_result_to_property_key(key_result)?;
+                let value = to_expr(value_result).ok()?;
+                let computed = matches!(&key, ObjectPropertyKey::Computed(_));
+
+                return Some(ObjectProperty::Property(Box::new(Property {
+                    key,
+                    value,
+                    kind: PropertyKind::Init,
+                    computed,
+                    shorthand: false,
+                    method: false,
+                    span,
+                })));
+            }
+            // Method property: [optional async, optional *, property_key, "(", optional params, ")", block]
+            // This has 5+ items
+            if len >= 5 {
+                return parse_method_property(items, span);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Extract BlockStatement from a parsed block result
+fn to_block_statement(result: ParseResult) -> Option<Rc<BlockStatement>> {
+    match to_stmt(result) {
+        Ok(Statement::Block(block)) => Some(Rc::new(block)),
+        _ => None,
+    }
+}
+
+/// Parse method property from list items
+fn parse_method_property(items: Vec<ParseResult>, span: Span) -> Option<ObjectProperty> {
+    // Method: [async?, *?, key, "(", params?, ")", block]
+    // Getter: ["get", key, "(", ")", block] - 5 items
+    // Setter: ["set", key, "(", params, ")", block] - 6 items
+    let len = items.len();
+    let mut iter = items.into_iter().peekable();
+
+    // Check for getter/setter
+    if len == 5 {
+        let is_getter = match iter.peek() {
+            Some(ParseResult::Text(s, _)) => s.as_ref() == "get",
+            _ => false,
+        };
+        if is_getter {
+            iter.next(); // consume "get"
+            let key_result = iter.next()?;
+            let _open = iter.next()?; // "("
+            let _close = iter.next()?; // ")"
+            let block = iter.next()?;
+
+            let key = parse_result_to_property_key(key_result)?;
+            let body = to_block_statement(block)?;
+
+            return Some(ObjectProperty::Property(Box::new(Property {
+                key,
+                value: Expression::Function(Box::new(FunctionExpression {
+                    id: None,
+                    params: Rc::from(Vec::<FunctionParam>::new()),
+                    body,
+                    async_: false,
+                    generator: false,
+                    type_parameters: None,
+                    return_type: None,
+                    span: span.clone(),
+                })),
+                kind: PropertyKind::Get,
+                computed: false,
+                shorthand: false,
+                method: true,
+                span,
+            })));
+        }
+    }
+
+    if len == 6 {
+        let is_setter = match iter.peek() {
+            Some(ParseResult::Text(s, _)) => s.as_ref() == "set",
+            _ => false,
+        };
+        if is_setter {
+            iter.next(); // consume "set"
+            let key_result = iter.next()?;
+            let _open = iter.next()?; // "("
+            let params_result = iter.next()?;
+            let _close = iter.next()?; // ")"
+            let block = iter.next()?;
+
+            let key = parse_result_to_property_key(key_result)?;
+            let params: Rc<[FunctionParam]> = parse_function_params(params_result).into();
+            let body = to_block_statement(block)?;
+
+            return Some(ObjectProperty::Property(Box::new(Property {
+                key,
+                value: Expression::Function(Box::new(FunctionExpression {
+                    id: None,
+                    params,
+                    body,
+                    async_: false,
+                    generator: false,
+                    type_parameters: None,
+                    return_type: None,
+                    span: span.clone(),
+                })),
+                kind: PropertyKind::Set,
+                computed: false,
+                shorthand: false,
+                method: true,
+                span,
+            })));
+        }
+    }
+
+    // Regular method: [async?, *?, key, "(", params?, ")", block]
+    let first = iter.next()?;
+    let is_async = match &first {
+        ParseResult::Text(s, _) => s.as_ref() == "async",
+        _ => false,
+    };
+    let first_after_async = if is_async { iter.next()? } else { first };
+
+    let is_generator = match &first_after_async {
+        ParseResult::Text(s, _) => s.as_ref() == "*",
+        _ => false,
+    };
+    let key_result = if is_generator { iter.next()? } else { first_after_async };
+
+    let key = parse_result_to_property_key(key_result)?;
+    let _open = iter.next()?; // "("
+    let params_result = iter.next()?;
+    let _close = iter.next()?; // ")"
+    let block = iter.next()?;
+
+    let params: Rc<[FunctionParam]> = parse_function_params(params_result).into();
+    let body = to_block_statement(block)?;
+
+    Some(ObjectProperty::Property(Box::new(Property {
+        key,
+        value: Expression::Function(Box::new(FunctionExpression {
+            id: None,
+            params,
+            body,
+            async_: is_async,
+            generator: is_generator,
+            type_parameters: None,
+            return_type: None,
+            span: span.clone(),
+        })),
+        kind: PropertyKind::Init,
+        computed: false,
+        shorthand: false,
+        method: true,
+        span,
+    })))
+}
+
+/// Convert ParseResult to ObjectPropertyKey
+fn parse_result_to_property_key(result: ParseResult) -> Option<ObjectPropertyKey> {
+    match result {
+        ParseResult::Ident(id) => Some(ObjectPropertyKey::Identifier(id)),
+        ParseResult::Text(s, span) => {
+            let s_str = s.as_ref();
+            // String or number literal as key
+            if s_str.starts_with('"') || s_str.starts_with('\'') {
+                Some(ObjectPropertyKey::String(StringLiteral {
+                    value: JsString::from(s_str.trim_matches(|c| c == '"' || c == '\'').to_string()),
+                    span,
+                }))
+            } else {
+                // Try as number
+                Some(ObjectPropertyKey::Number(Literal {
+                    value: LiteralValue::Number(s_str.parse().unwrap_or(0.0)),
+                    span,
+                }))
+            }
+        }
+        ParseResult::Expr(e) => Some(ObjectPropertyKey::Computed(Rc::new(e))),
+        ParseResult::List(items) => {
+            // Could be computed: ["[", expression, "]"]
+            if items.len() == 3 {
+                let expr = items.into_iter().nth(1)?;
+                if let Ok(e) = to_expr(expr) {
+                    return Some(ObjectPropertyKey::Computed(Rc::new(e)));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Parse function params from ParseResult
+fn parse_function_params(result: ParseResult) -> Vec<FunctionParam> {
+    let default_span = Span { start: 0, end: 0, line: 0, column: 0 };
+    match result {
+        ParseResult::None => vec![],
+        ParseResult::List(items) => {
+            items.into_iter().filter_map(|item| {
+                // Each param could be an Ident, Pattern, or complex structure
+                match item {
+                    ParseResult::Ident(id) => {
+                        let span = id.span.clone();
+                        Some(FunctionParam {
+                            pattern: Pattern::Identifier(id),
+                            type_annotation: None,
+                            optional: false,
+                            decorators: vec![],
+                            accessibility: None,
+                            readonly: false,
+                            span,
+                        })
+                    }
+                    ParseResult::Pat(p) => {
+                        let span = p.span();
+                        Some(FunctionParam {
+                            pattern: p,
+                            type_annotation: None,
+                            optional: false,
+                            decorators: vec![],
+                            accessibility: None,
+                            readonly: false,
+                            span,
+                        })
+                    }
+                    _ => None,
+                }
+            }).collect()
+        }
+        ParseResult::Pat(p) => {
+            let span = p.span();
+            vec![FunctionParam {
+                pattern: p,
+                type_annotation: None,
+                optional: false,
+                decorators: vec![],
+                accessibility: None,
+                readonly: false,
+                span,
+            }]
+        }
+        _ => vec![],
+    }
+}
+
 /// Create class declaration
 fn create_class_decl(
     decorators: ParseResult,
@@ -2741,7 +3058,9 @@ fn rule_object_expression(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.optional(r.separated_by_trailing(r.parse("object_property"), op(r, ","))),
         op(r, "}"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        create_object_expr(result, span)
+    }")
 }
 
 fn rule_object_property(r: &RuleBuilder) -> Combinator {
@@ -3016,7 +3335,29 @@ fn rule_yield_expression(r: &RuleBuilder) -> Combinator {
         kw(r, "yield"),
         r.optional(op(r, "*")),
         r.optional(r.parse("expression")),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [yield, optional *, optional expression]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _yield_kw = iter.next();
+            let delegate_part = iter.next().unwrap_or(ParseResult::None);
+            let arg_part = iter.next().unwrap_or(ParseResult::None);
+
+            let delegate = !matches!(delegate_part, ParseResult::None);
+            let argument = match arg_part {
+                ParseResult::None => None,
+                other => to_expr(other).ok().map(Rc::new),
+            };
+
+            Ok(ParseResult::Expr(Expression::Yield(YieldExpression {
+                argument,
+                delegate,
+                span,
+            })))
+        } else {
+            Err(ParseError::new(\"Expected yield expression parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_parenthesized(r: &RuleBuilder) -> Combinator {
