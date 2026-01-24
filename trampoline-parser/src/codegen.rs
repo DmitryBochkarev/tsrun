@@ -392,6 +392,7 @@ impl<'a> CodeGenerator<'a> {
                     self.line(&format!("{}AfterPostfixCall {{ result_base: usize, min_prec: u8, op_idx: usize, args_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                     self.line(&format!("{}AfterPostfixIndex {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                     self.line(&format!("{}AfterPostfixMember {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                    self.line(&format!("{}AfterPostfixRule {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                 }
 
                 // Ternary work variants
@@ -1899,6 +1900,33 @@ impl<'a> CodeGenerator<'a> {
                                     self.line("}");
                                 }
                             }
+                            crate::ir::PostfixOp::Rule {
+                                rule_name,
+                                precedence,
+                                ..
+                            } => {
+                                // For rule-based postfix (like tagged templates), check for backtick start
+                                // This is specific to template_literal - starts with backtick
+                                if rule_name == "template_literal" {
+                                    self.line(&format!(
+                                        "if !postfix_matched && {} >= min_prec && self.input.get(self.pos..).map_or(false, |s| s.starts_with('`')) {{",
+                                        precedence
+                                    ));
+                                    self.indent += 1;
+                                    self.line("postfix_matched = true;");
+                                    self.line(&format!(
+                                        "self.work_stack.push(Work::{}AfterPostfixRule {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
+                                        prefix, i
+                                    ));
+                                    // Push work to parse the rule
+                                    self.line(&format!(
+                                        "self.work_stack.push(Work::{}Start {{ result_base: self.result_stack.len() }});",
+                                        to_pascal_case(rule_name)
+                                    ));
+                                    self.indent -= 1;
+                                    self.line("}");
+                                }
+                            }
                             crate::ir::PostfixOp::Member {
                                 pattern,
                                 precedence,
@@ -2783,6 +2811,47 @@ impl<'a> CodeGenerator<'a> {
                     self.line("self.last_error = Some(self.make_error(\"expected identifier after '.'\"));");
                     self.indent -= 1;
                     self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+                }
+
+                // AfterPostfixRule - apply mapping with parsed rule result
+                if pratt.postfix_ops.iter().any(|op| matches!(op, crate::ir::PostfixOp::Rule { .. })) {
+                    self.line(&format!(
+                        "Work::{}AfterPostfixRule {{ result_base, min_prec, op_idx, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    self.line("if self.last_error.is_some() { return Ok(()); }");
+                    self.line("// Pop the rule result and the tag expression");
+                    self.line("let rule_result = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line("let tag = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
+                    self.line("match op_idx {");
+                    self.indent += 1;
+                    for (i, postfix_op) in pratt.postfix_ops.iter().enumerate() {
+                        if let crate::ir::PostfixOp::Rule { mapping, .. } = postfix_op {
+                            self.line(&format!("{} => {{", i));
+                            self.indent += 1;
+                            self.line(&format!("let mapping_fn = {};", mapping));
+                            self.line("match mapping_fn(tag, rule_result, span) {");
+                            self.indent += 1;
+                            self.line("Ok(mapped) => self.result_stack.push(mapped),");
+                            self.line("Err(e) => self.last_error = Some(e),");
+                            self.indent -= 1;
+                            self.line("}");
+                            self.indent -= 1;
+                            self.line("}");
+                        }
+                    }
+                    self.line("_ => { self.result_stack.push(tag); }");
+                    self.indent -= 1;
+                    self.line("}");
+                    // Loop back to check for more postfix
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
                     self.indent -= 1;
                     self.line("}");
                 }

@@ -187,6 +187,14 @@ pub enum PostfixOp {
         precedence: u8,
         mapping: String,
     },
+    /// Rule-based postfix: parses another rule as the suffix
+    /// Used for tagged template literals: tag`template`
+    Rule {
+        /// The name of the rule to parse
+        rule_name: String,
+        precedence: u8,
+        mapping: String,
+    },
 }
 
 /// Ternary operator definition

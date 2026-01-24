@@ -505,6 +505,18 @@ impl PrattBuilder {
         self
     }
 
+    /// Define a rule-based postfix: parses another rule as the suffix
+    /// Used for tagged template literals: tag`template`
+    /// Example: `ops.postfix_rule("template_literal", 18, "|tag, template| tagged_template(tag, template)")`
+    pub fn postfix_rule(mut self, rule_name: &str, precedence: u8, mapping: &str) -> Self {
+        self.postfix_ops.push(PostfixOp::Rule {
+            rule_name: rule_name.to_string(),
+            precedence,
+            mapping: mapping.to_string(),
+        });
+        self
+    }
+
     /// Define a ternary operator: cond ? then : else
     /// Example: `ops.ternary("?", ":", 3, "|c, t, f| conditional(c, t, f)")`
     pub fn ternary(mut self, first: &str, second: &str, precedence: u8, mapping: &str) -> Self {

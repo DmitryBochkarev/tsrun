@@ -107,6 +107,7 @@ pub fn typescript_grammar() -> Grammar {
         .rule("arrow_body", rule_arrow_body)
         .rule("class_expression", rule_class_expression)
         .rule("template_literal", rule_template_literal)
+        .rule("template_literal_type", rule_template_literal_type)
         .rule("new_expression", rule_new_expression)
         .rule("yield_expression", rule_yield_expression)
         .rule("parenthesized", rule_parenthesized)
@@ -374,6 +375,27 @@ fn member_computed(obj: ParseResult, expr: ParseResult, optional: bool, span: Sp
         property: MemberProperty::Expression(Rc::new(to_expr(expr)?)),
         computed: true,
         optional,
+        span,
+    }))))
+}
+
+/// Create tagged template expression: tag`template`
+fn tagged_template(tag: ParseResult, template: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    let tag_expr = to_expr(tag)?;
+    // The template should already be a Template expression
+    let quasi = match template {
+        ParseResult::Expr(Expression::Template(t)) => *t,
+        other => {
+            // If not already a template, try to convert
+            match to_expr(other)? {
+                Expression::Template(t) => *t,
+                _ => return Err(ParseError::new("Expected template literal".to_string(), 0, 0)),
+            }
+        }
+    };
+    Ok(ParseResult::Expr(Expression::TaggedTemplate(Box::new(TaggedTemplateExpression {
+        tag: Rc::new(tag_expr),
+        quasi,
         span,
     }))))
 }
@@ -3835,6 +3857,8 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                 // Computed member (optional chaining first to match longer pattern)
                 .postfix_index("?.[", "]", 18, "|o, e, s| member_computed(o, e, true, s)")
                 .postfix_index("[", "]", 18, "|o, e, s| member_computed(o, e, false, s)")
+                // Tagged template literals: tag`template`
+                .postfix_rule("template_literal", 18, "|tag, template, s| tagged_template(tag, template, s)")
         }),
         // Optional `as Type` suffixes (TypeScript type assertions)
         r.zero_or_more(r.sequence((
@@ -4230,6 +4254,103 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
             r.parse("ws"),
         )),
     ))
+    .ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        let items = result.into_list();
+        // Check if this is a simple template or one with expressions
+        // Simple: [template_string_text, ws]
+        // With expressions: [head, ws, expr, middles, tail, ws]
+
+        if items.len() == 2 {
+            // Simple template string `hello`
+            let text = items.into_iter().next().unwrap_or(ParseResult::None).into_text();
+            let text_str = text.as_ref();
+            // Remove backticks from both ends
+            let content: JsString = if text_str.starts_with('`') && text_str.ends_with('`') && text_str.len() >= 2 {
+                text_str[1..text_str.len()-1].into()
+            } else {
+                text
+            };
+            let quasis = vec![TemplateElement {
+                value: content,
+                tail: true,
+                span: span.clone(),
+            }];
+            Ok(ParseResult::Expr(Expression::Template(Box::new(TemplateLiteral {
+                quasis,
+                expressions: vec![],
+                span,
+            }))))
+        } else {
+            // Template with expressions: [head, ws, expr, middles_list, tail, ws]
+            let mut iter = items.into_iter();
+            let head_text = iter.next().unwrap_or(ParseResult::None).into_text();
+            let _ws1 = iter.next();
+            let first_expr = to_expr(iter.next().unwrap_or(ParseResult::None))?;
+            let middles = iter.next().unwrap_or(ParseResult::None);
+            let tail_text = iter.next().unwrap_or(ParseResult::None).into_text();
+
+            let mut quasis = Vec::new();
+            let mut expressions = vec![first_expr];
+
+            // Parse head: `xxx${  ->  xxx
+            let head_str = head_text.as_ref();
+            let head_content: JsString = if head_str.starts_with('`') && head_str.ends_with(\"${\") && head_str.len() >= 3 {
+                head_str[1..head_str.len()-2].into()
+            } else {
+                head_text
+            };
+            quasis.push(TemplateElement {
+                value: head_content,
+                tail: false,
+                span: span.clone(),
+            });
+
+            // Parse middles: }xxx${
+            if let ParseResult::List(middle_items) = middles {
+                for item in middle_items {
+                    if let ParseResult::List(parts) = item {
+                        let mut part_iter = parts.into_iter();
+                        let middle_text = part_iter.next().unwrap_or(ParseResult::None).into_text();
+                        let _ws = part_iter.next();
+                        let expr = to_expr(part_iter.next().unwrap_or(ParseResult::None))?;
+
+                        // Parse middle: }xxx${  ->  xxx
+                        let middle_str = middle_text.as_ref();
+                        let middle_content: JsString = if middle_str.starts_with('}') && middle_str.ends_with(\"${\") && middle_str.len() >= 3 {
+                            middle_str[1..middle_str.len()-2].into()
+                        } else {
+                            middle_text
+                        };
+                        quasis.push(TemplateElement {
+                            value: middle_content,
+                            tail: false,
+                            span: span.clone(),
+                        });
+                        expressions.push(expr);
+                    }
+                }
+            }
+
+            // Parse tail: }xxx`  ->  xxx
+            let tail_str = tail_text.as_ref();
+            let tail_content: JsString = if tail_str.starts_with('}') && tail_str.ends_with('`') && tail_str.len() >= 2 {
+                tail_str[1..tail_str.len()-1].into()
+            } else {
+                tail_text
+            };
+            quasis.push(TemplateElement {
+                value: tail_content,
+                tail: true,
+                span: span.clone(),
+            });
+
+            Ok(ParseResult::Expr(Expression::Template(Box::new(TemplateLiteral {
+                quasis,
+                expressions,
+                span,
+            }))))
+        }
+    }")
 }
 
 fn rule_new_expression(r: &RuleBuilder) -> Combinator {
@@ -4654,11 +4775,31 @@ fn rule_type_parameter(r: &RuleBuilder) -> Combinator {
 
 fn rule_literal_type(r: &RuleBuilder) -> Combinator {
     r.choice((
+        r.parse("template_literal_type"),
         r.sequence((r.parse("string_literal"), r.parse("ws"))),
         r.sequence((r.parse("number_literal"), r.parse("ws"))),
         kw(r, "true"),
         kw(r, "false"),
         kw(r, "null"),
+    ))
+}
+
+fn rule_template_literal_type(r: &RuleBuilder) -> Combinator {
+    // Template literal type: `Hello ${string}` or just `hello`
+    r.choice((
+        r.sequence((r.parse("template_string"), r.parse("ws"))),
+        r.sequence((
+            r.parse("template_head"),
+            r.parse("ws"),
+            r.parse("type"),
+            r.zero_or_more(r.sequence((
+                r.parse("template_middle"),
+                r.parse("ws"),
+                r.parse("type"),
+            ))),
+            r.parse("template_tail"),
+            r.parse("ws"),
+        )),
     ))
 }
 
