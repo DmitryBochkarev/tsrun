@@ -168,6 +168,7 @@ fn ast_config(c: AstConfigBuilder) -> AstConfigBuilder {
         .result_variant("Prog", "Program")
         .result_variant("ClassBody", "ClassBody")
         .result_variant("ClassMember", "ClassMember")
+        .result_variant("SwitchCase", "SwitchCase")
         .helper(HELPER_FUNCTIONS)
 }
 
@@ -1750,7 +1751,41 @@ fn rule_switch_statement(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.zero_or_more(r.parse("switch_case")),
         op(r, "}"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [switch, (, discriminant, ), {, cases, }]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _switch_kw = iter.next();
+            let _open_paren = iter.next();
+            let discriminant = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next();
+            let _open_brace = iter.next();
+            let cases_result = iter.next().unwrap_or(ParseResult::None);
+            let _close_brace = iter.next();
+
+            let cases: Vec<SwitchCase> = match cases_result {
+                ParseResult::List(items) => {
+                    items.into_iter().filter_map(|item| {
+                        if let ParseResult::SwitchCase(c) = item {
+                            Some(c)
+                        } else {
+                            None
+                        }
+                    }).collect()
+                }
+                ParseResult::None => vec![],
+                _ => vec![],
+            };
+
+            Ok(ParseResult::Stmt(Statement::Switch(SwitchStatement {
+                discriminant: Rc::new(to_expr(discriminant)?),
+                cases: Rc::from(cases),
+                span,
+            })))
+        } else {
+            Err(ParseError::new(\"Expected switch statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_switch_case(r: &RuleBuilder) -> Combinator {
@@ -1760,12 +1795,65 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
             r.parse("expression"),
             op(r, ":"),
             r.zero_or_more(r.parse("statement")),
-        )),
+        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+            // [case, test, :, consequent]
+            if let ParseResult::List(parts) = result {
+                let mut iter = parts.into_iter();
+                let _case_kw = iter.next();
+                let test = iter.next().unwrap_or(ParseResult::None);
+                let _colon = iter.next();
+                let consequent_result = iter.next().unwrap_or(ParseResult::None);
+
+                let consequent: Vec<Statement> = match consequent_result {
+                    ParseResult::List(items) => {
+                        items.into_iter().filter_map(|item| {
+                            if let ParseResult::Stmt(s) = item { Some(s) } else { None }
+                        }).collect()
+                    }
+                    ParseResult::Stmt(s) => vec![s],
+                    _ => vec![],
+                };
+
+                Ok(ParseResult::SwitchCase(SwitchCase {
+                    test: Some(Rc::new(to_expr(test)?)),
+                    consequent: Rc::from(consequent),
+                    span,
+                }))
+            } else {
+                Err(ParseError::new(\"Expected case parts\".to_string(), 0, 0))
+            }
+        }"),
         r.sequence((
             kw(r, "default"),
             op(r, ":"),
             r.zero_or_more(r.parse("statement")),
-        )),
+        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+            // [default, :, consequent]
+            if let ParseResult::List(parts) = result {
+                let mut iter = parts.into_iter();
+                let _default_kw = iter.next();
+                let _colon = iter.next();
+                let consequent_result = iter.next().unwrap_or(ParseResult::None);
+
+                let consequent: Vec<Statement> = match consequent_result {
+                    ParseResult::List(items) => {
+                        items.into_iter().filter_map(|item| {
+                            if let ParseResult::Stmt(s) = item { Some(s) } else { None }
+                        }).collect()
+                    }
+                    ParseResult::Stmt(s) => vec![s],
+                    _ => vec![],
+                };
+
+                Ok(ParseResult::SwitchCase(SwitchCase {
+                    test: None,
+                    consequent: Rc::from(consequent),
+                    span,
+                }))
+            } else {
+                Err(ParseError::new(\"Expected default case parts\".to_string(), 0, 0))
+            }
+        }"),
     ))
 }
 
@@ -1960,7 +2048,29 @@ fn rule_labeled_statement(r: &RuleBuilder) -> Combinator {
         r.parse("identifier"),
         op(r, ":"),
         r.parse("statement"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [label, :, body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let label = iter.next().unwrap_or(ParseResult::None);
+            let _colon = iter.next();
+            let body = iter.next().unwrap_or(ParseResult::None);
+
+            let label_id = to_ident(label)?;
+            let body_stmt = match body {
+                ParseResult::Stmt(s) => Rc::new(s),
+                _ => return Err(ParseError::new(\"Expected statement\".to_string(), 0, 0)),
+            };
+
+            Ok(ParseResult::Stmt(Statement::Labeled(LabeledStatement {
+                label: label_id,
+                body: body_stmt,
+                span,
+            })))
+        } else {
+            Err(ParseError::new(\"Expected labeled statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_expression_statement(r: &RuleBuilder) -> Combinator {
@@ -2611,13 +2721,57 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
 fn rule_new_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
         kw(r, "new"),
-        r.parse("expression"),
+        r.parse("primary"),  // Use primary instead of expression to avoid consuming too much
         r.optional(r.sequence((
             op(r, "("),
             r.optional(r.parse("argument_list")),
             op(r, ")"),
         ))),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [new, callee, args?]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _new_kw = iter.next();
+            let callee = iter.next().unwrap_or(ParseResult::None);
+            let args_result = iter.next().unwrap_or(ParseResult::None);
+
+            let arguments: Vec<Argument> = match args_result {
+                ParseResult::List(arg_parts) => {
+                    // [(, args?, )]
+                    let mut arg_iter = arg_parts.into_iter();
+                    let _open_paren = arg_iter.next();
+                    let args_list = arg_iter.next().unwrap_or(ParseResult::None);
+                    let _close_paren = arg_iter.next();
+
+                    match args_list {
+                        ParseResult::List(items) => {
+                            items.into_iter().filter_map(|a| {
+                                to_expr(a).ok().map(Argument::Expression)
+                            }).collect()
+                        }
+                        ParseResult::None => vec![],
+                        other => {
+                            if let Ok(e) = to_expr(other) {
+                                vec![Argument::Expression(e)]
+                            } else {
+                                vec![]
+                            }
+                        }
+                    }
+                }
+                _ => vec![],
+            };
+
+            Ok(ParseResult::Expr(Expression::New(Box::new(NewExpression {
+                callee: Rc::new(to_expr(callee)?),
+                arguments,
+                type_arguments: None,
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected new expression parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_yield_expression(r: &RuleBuilder) -> Combinator {

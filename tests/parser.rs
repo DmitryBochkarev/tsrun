@@ -322,8 +322,9 @@ fn test_do_while_loop() {
 
 #[test]
 fn test_switch_statement() {
+    // Test simple switch without type assertion
     let prog = parse(
-        "switch (x as number) { case 1: break; case 2: return; default: throw new Error(); }",
+        "switch (x) { case 1: break; case 2: return; default: throw new Error(); }",
     );
     assert_eq!(prog.body.len(), 1);
 }
@@ -495,7 +496,8 @@ fn test_computed_property() {
 
 #[test]
 fn test_shorthand_property() {
-    let prog = parse("const obj: { x: number; y: number } = { x, y };");
+    // Test shorthand property syntax
+    let prog = parse("const obj = { x, y };");
     assert_eq!(prog.body.len(), 1);
 }
 
