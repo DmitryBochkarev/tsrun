@@ -1272,17 +1272,34 @@ fn to_block_statement(result: ParseResult) -> Option<Rc<BlockStatement>> {
 }
 
 /// Parse method property from list items
+/// Check if a ParseResult is a captured keyword (from captured_kw)
+/// Returns the keyword string if it matches, None otherwise
+fn is_captured_keyword(result: &ParseResult, keyword: &str) -> bool {
+    match result {
+        ParseResult::Text(s, _) => s.as_ref() == keyword,
+        // captured_kw produces [Text("get"|"set", span), None, None]
+        ParseResult::List(parts) => {
+            if let Some(ParseResult::Text(s, _)) = parts.first() {
+                s.as_ref() == keyword
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
 fn parse_method_property(items: Vec<ParseResult>, span: Span) -> Option<ObjectProperty> {
     // Method: [async?, *?, key, "(", params?, ")", block]
-    // Getter: ["get", key, "(", ")", block] - 5 items
-    // Setter: ["set", key, "(", params, ")", block] - 6 items
+    // Getter: ["get", key, "(", ")", type_ann?, block] - 6 items
+    // Setter: ["set", key, "(", params, ")", type_ann?, block] - 7 items
     let len = items.len();
     let mut iter = items.into_iter().peekable();
 
     // Check for getter/setter
-    if len == 5 {
+    if len == 6 {
         let is_getter = match iter.peek() {
-            Some(ParseResult::Text(s, _)) => s.as_ref() == "get",
+            Some(result) => is_captured_keyword(result, "get"),
             _ => false,
         };
         if is_getter {
@@ -1290,6 +1307,7 @@ fn parse_method_property(items: Vec<ParseResult>, span: Span) -> Option<ObjectPr
             let key_result = iter.next()?;
             let _open = iter.next()?; // "("
             let _close = iter.next()?; // ")"
+            let _type_ann = iter.next()?; // optional type annotation
             let block = iter.next()?;
 
             let key = parse_result_to_property_key(key_result)?;
@@ -1316,9 +1334,9 @@ fn parse_method_property(items: Vec<ParseResult>, span: Span) -> Option<ObjectPr
         }
     }
 
-    if len == 6 {
+    if len == 7 {
         let is_setter = match iter.peek() {
-            Some(ParseResult::Text(s, _)) => s.as_ref() == "set",
+            Some(result) => is_captured_keyword(result, "set"),
             _ => false,
         };
         if is_setter {
@@ -1327,6 +1345,7 @@ fn parse_method_property(items: Vec<ParseResult>, span: Span) -> Option<ObjectPr
             let _open = iter.next()?; // "("
             let params_result = iter.next()?;
             let _close = iter.next()?; // ")"
+            let _type_ann = iter.next()?; // optional type annotation
             let block = iter.next()?;
 
             let key = parse_result_to_property_key(key_result)?;
@@ -1355,18 +1374,14 @@ fn parse_method_property(items: Vec<ParseResult>, span: Span) -> Option<ObjectPr
     }
 
     // Regular method: [async?, *?, key, "(", params?, ")", block]
-    let first = iter.next()?;
-    let is_async = match &first {
-        ParseResult::Text(s, _) => s.as_ref() == "async",
-        _ => false,
-    };
-    let first_after_async = if is_async { iter.next()? } else { first };
+    // Always consume both optional slots, then the key
+    let async_result = iter.next()?;
+    let is_async = is_captured_keyword(&async_result, "async");
 
-    let is_generator = match &first_after_async {
-        ParseResult::Text(s, _) => s.as_ref() == "*",
-        _ => false,
-    };
-    let key_result = if is_generator { iter.next()? } else { first_after_async };
+    let star_result = iter.next()?;
+    let is_generator = is_captured_keyword(&star_result, "*");
+
+    let key_result = iter.next()?;
 
     let key = parse_result_to_property_key(key_result)?;
     let _open = iter.next()?; // "("
@@ -1910,6 +1925,11 @@ fn captured_kw(r: &RuleBuilder, keyword: &str) -> Combinator {
 
 fn op(r: &RuleBuilder, operator: &str) -> Combinator {
     r.sequence((r.lit(operator), r.parse("ws")))
+}
+
+/// Operator that captures the matched text (for distinguishing */, etc.)
+fn captured_op(r: &RuleBuilder, operator: &str) -> Combinator {
+    r.sequence((r.capture(r.lit(operator)), r.parse("ws")))
 }
 
 /// Create an infix operator pattern with leading whitespace
@@ -4113,8 +4133,8 @@ fn rule_shorthand_property(r: &RuleBuilder) -> Combinator {
 
 fn rule_method_property(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.optional(kw(r, "async")),
-        r.optional(op(r, "*")),
+        r.optional(captured_kw(r, "async")),
+        r.optional(captured_op(r, "*")),
         r.parse("property_key"),
         op(r, "("),
         r.optional(r.parse("parameter_list")),
@@ -4125,21 +4145,23 @@ fn rule_method_property(r: &RuleBuilder) -> Combinator {
 
 fn rule_getter_property(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        kw(r, "get"),
+        captured_kw(r, "get"),
         r.parse("property_key"),
         op(r, "("),
         op(r, ")"),
+        r.optional(r.parse("type_annotation")),
         r.parse("block_statement"),
     ))
 }
 
 fn rule_setter_property(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        kw(r, "set"),
+        captured_kw(r, "set"),
         r.parse("property_key"),
         op(r, "("),
-        r.parse("pattern"),
+        r.parse("parameter"),
         op(r, ")"),
+        r.optional(r.parse("type_annotation")),
         r.parse("block_statement"),
     ))
 }
