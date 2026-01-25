@@ -1602,6 +1602,7 @@ fn create_class_decl(
 
 /// Create class expression
 fn create_class_expr(
+    decorators: ParseResult,
     name: ParseResult,
     extends_clause: ParseResult,
     body: ParseResult,
@@ -1627,13 +1628,16 @@ fn create_class_expr(
         _ => ClassBody { members: vec![], span: span.clone() },
     };
 
+    // Parse decorators
+    let parsed_decorators = parse_decorators(decorators, span.clone());
+
     Ok(ParseResult::Expr(Expression::Class(Box::new(ClassExpression {
         id,
         type_parameters: None,
         super_class,
         implements: vec![],
         body: class_body,
-        decorators: vec![],
+        decorators: parsed_decorators,
         span,
     }))))
 }
@@ -4551,6 +4555,7 @@ fn rule_arrow_body(r: &RuleBuilder) -> Combinator {
 
 fn rule_class_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
+        r.zero_or_more(r.parse("decorator")),
         kw(r, "class"),
         r.optional(r.parse("identifier")),
         r.optional(r.parse("type_parameters")),
@@ -4563,9 +4568,10 @@ fn rule_class_expression(r: &RuleBuilder) -> Combinator {
     ))
     .ast(
         "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
-        // [class, name?, type_params?, extends?, implements?, body]
+        // [decorators, class, name?, type_params?, extends?, implements?, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
+            let decorators = iter.next().unwrap_or(ParseResult::None);
             let _class_kw = iter.next();
             let name = iter.next().unwrap_or(ParseResult::None);
             let _type_params = iter.next();
@@ -4573,7 +4579,7 @@ fn rule_class_expression(r: &RuleBuilder) -> Combinator {
             let _implements = iter.next();
             let body = iter.next().unwrap_or(ParseResult::None);
 
-            create_class_expr(name, extends_clause, body, span)
+            create_class_expr(decorators, name, extends_clause, body, span)
         } else {
             Err(ParseError::new(\"Expected class expression parts\".to_string(), 0, 0))
         }

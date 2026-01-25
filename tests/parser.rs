@@ -3050,6 +3050,12 @@ fn test_debug_show_error() {
     let mut p_bind = Parser::new("Function.prototype.call.bind(Array.prototype.push)", &mut dict);
     let r_bind = p_bind.parse_program();
     eprintln!("'Function.prototype.call.bind(Array.prototype.push)' FULL: {:?}", r_bind);
+
+    // Decorated class expression
+    let mut dict = StringDict::new();
+    let mut p_dec = Parser::new("const Foo = @mark class { };", &mut dict);
+    let r_dec = p_dec.parse_program();
+    eprintln!("'const Foo = @mark class {{ }};' FULL: {:?}", r_dec);
 }
 
 // Regression: member access inside object literal value - BUG FOUND
