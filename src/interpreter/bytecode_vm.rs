@@ -2881,7 +2881,9 @@ impl BytecodeVM {
                 let name = self
                     .get_string_constant(name)
                     .ok_or_else(|| JsError::internal_error("Invalid variable name constant"))?;
-                let value = interp.env_get(&name)?;
+                // Intern the string to ensure pointer-based lookup works
+                let interned_name = interp.intern(name.as_str());
+                let value = interp.env_get(&interned_name)?;
                 self.set_reg(dst, value);
                 Ok(OpResult::Continue)
             }
@@ -2890,8 +2892,10 @@ impl BytecodeVM {
                 let name = self
                     .get_string_constant(name)
                     .ok_or_else(|| JsError::internal_error("Invalid variable name constant"))?;
+                // Intern the string to ensure pointer-based lookup works
+                let interned_name = interp.intern(name.as_str());
                 // Try to get the variable, return undefined if not found
-                let value = interp.env_get(&name).unwrap_or(JsValue::Undefined);
+                let value = interp.env_get(&interned_name).unwrap_or(JsValue::Undefined);
                 self.set_reg(dst, value);
                 Ok(OpResult::Continue)
             }
@@ -2900,8 +2904,10 @@ impl BytecodeVM {
                 let name = self
                     .get_string_constant(name)
                     .ok_or_else(|| JsError::internal_error("Invalid variable name constant"))?;
+                // Intern the string to ensure pointer-based lookup works
+                let interned_name = interp.intern(name.as_str());
                 let value = self.get_reg(src).clone();
-                interp.env_set(&name, value)?;
+                interp.env_set(&interned_name, value)?;
                 Ok(OpResult::Continue)
             }
 
@@ -2914,7 +2920,9 @@ impl BytecodeVM {
                     .get_string_constant(name)
                     .ok_or_else(|| JsError::internal_error("Invalid variable name constant"))?;
                 let value = self.get_reg(init).clone();
-                interp.env_define(name, value, mutable);
+                // Intern the string to ensure pointer-based lookup works
+                let interned_name = interp.intern(name.as_str());
+                interp.env_define(interned_name, value, mutable);
                 Ok(OpResult::Continue)
             }
 
@@ -2922,8 +2930,10 @@ impl BytecodeVM {
                 let name = self
                     .get_string_constant(name)
                     .ok_or_else(|| JsError::internal_error("Invalid variable name constant"))?;
+                // Intern the string to ensure pointer-based lookup works
+                let interned_name = interp.intern(name.as_str());
                 let value = self.get_reg(init).clone();
-                interp.env_define(name, value, true);
+                interp.env_define(interned_name, value, true);
                 Ok(OpResult::Continue)
             }
 

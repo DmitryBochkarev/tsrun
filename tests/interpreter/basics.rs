@@ -1133,3 +1133,44 @@ fn test_closure_object_method() {
         JsValue::Number(3.0) // 1 + 2
     );
 }
+
+// Minimal test for closure debugging
+#[test]
+fn test_simple_closure() {
+    // Simplest possible closure test
+    assert_eq!(eval("let x = 1; let f = () => x; f()"), JsValue::Number(1.0));
+}
+
+#[test]
+fn test_default_param_no_recursion() {
+    // Test default parameters without recursion
+    assert_eq!(
+        eval(
+            r#"
+            function test(n = 3) {
+                return n;
+            }
+            test()
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_default_param_recursion() {
+    // Test default parameters in recursive function (simplified from tco_with_arguments)
+    assert_eq!(
+        eval(
+            r#"
+            function test(n = 3) {
+                if (n <= 0) return 0;
+                return n + test(n - 1);
+            }
+            test()
+        "#
+        ),
+        JsValue::Number(6.0) // 3+2+1 = 6
+    );
+}
+

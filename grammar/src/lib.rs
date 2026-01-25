@@ -617,13 +617,32 @@ fn extract_param_pattern(item: ParseResult, default_span: &Span) -> Option<Funct
             let _accessibility = iter.next(); // Skip accessibility
             let _readonly = iter.next(); // Skip readonly
             let pattern_result = iter.next()?; // Get pattern
+            let _optional = iter.next(); // Skip optional
+            let _type_annotation = iter.next(); // Skip type annotation
+            let default_result = iter.next(); // Get default value
 
             // Try to convert pattern_result to a Pattern
-            let pattern = match pattern_result {
+            let mut pattern = match pattern_result {
                 ParseResult::Pat(p) => p,
                 ParseResult::Ident(id) => Pattern::Identifier(id),
                 _ => return None,
             };
+
+            // If there's a default value, wrap pattern in Pattern::Assignment
+            if let Some(default_val) = default_result {
+                // default_val is a sequence: [=, expression]
+                if let ParseResult::List(default_parts) = default_val {
+                    if let Some(expr_result) = default_parts.into_iter().nth(1) {
+                        if let Ok(expr) = to_expr(expr_result) {
+                            pattern = Pattern::Assignment(AssignmentPattern {
+                                left: Box::new(pattern),
+                                right: Rc::new(expr),
+                                span: default_span.clone(),
+                            });
+                        }
+                    }
+                }
+            }
 
             // Parse decorators
             let decorators = parse_decorators(decorators_result, default_span.clone());
