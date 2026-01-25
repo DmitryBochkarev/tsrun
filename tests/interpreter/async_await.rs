@@ -1,7 +1,7 @@
 // Tests for async/await implementation
 
-use super::eval;
-use tsrun::JsValue;
+use super::{eval, run_to_completion};
+use tsrun::{create_eval_internal_module, InternalModule, Interpreter, InterpreterConfig, JsValue};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Async function declaration
@@ -276,6 +276,1231 @@ fn test_async_function_expression_named() {
     "#,
     );
     assert_eq!(result, JsValue::Number(42.0));
+}
+
+// Regression: async function expression assigned to globalThis property
+#[test]
+fn test_async_function_expression_globalthis() {
+    let result = eval(
+        r#"
+        globalThis.myFunc = async function() {
+            return 42;
+        };
+        let captured = 0;
+        myFunc().then(function(x) {
+            captured = x;
+        });
+        captured
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+// Regression: async function with TypeScript type annotations in assignment
+#[test]
+fn test_async_function_expression_with_types() {
+    let result = eval(
+        r#"
+        globalThis.sleep = async function(ms: number): Promise<void> {
+            return undefined;
+        };
+        let captured = 0;
+        sleep(100).then(function() {
+            captured = 42;
+        });
+        captured
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+// Regression: async function in source module (mimics orders test setup)
+#[test]
+fn test_async_function_in_source_module() {
+    const MODULE_SOURCE: &str = r#"
+globalThis.myAsyncFunc = async function(): Promise<void> {
+    return undefined;
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![InternalModule::source("test:module", MODULE_SOURCE)],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    // Import the module
+    interp
+        .prepare(r#"import "test:module"; myAsyncFunc"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    // Should complete successfully (the async function should be callable)
+    match result {
+        tsrun::StepResult::Complete(_) => {} // Good
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: async function in source module with import - minimal version
+#[test]
+fn test_async_function_in_source_module_with_import_minimal() {
+    // Minimal test with just the import
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.myFunc = async function(): Promise<void> {
+    await order({ type: "test" });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof myFunc"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: async function in source module with import - two functions
+#[test]
+fn test_async_function_in_source_module_with_import_two_funcs() {
+    // Two async functions
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.sleep = async function(ms: number): Promise<void> {
+    await order({ type: "sleep", delay: ms });
+};
+
+globalThis.fetch = async function(url: string): Promise<any> {
+    return await order({ type: "fetch", url: url });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof fetch"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: Optional chaining - direct comparison
+#[test]
+fn test_optional_chaining_direct() {
+    // Direct optional chaining works
+    let result = eval(
+        r#"
+const x = { method: "GET" };
+x?.method
+"#,
+    );
+    assert_eq!(result, JsValue::String("GET".into()));
+}
+
+// Regression: Optional chaining in object literal
+#[test]
+fn test_optional_chaining_in_object() {
+    // Optional chaining inside an object literal value
+    let result = eval(
+        r#"
+const x = { method: "GET" };
+const obj = { value: x?.method };
+obj.value
+"#,
+    );
+    assert_eq!(result, JsValue::String("GET".into()));
+}
+
+// Regression: Optional chaining in single-line await
+#[test]
+fn test_async_optional_chaining_single_line() {
+    // Single line await with optional chaining
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.b = async function(x: any): Promise<any> {
+    return await order({ method: x?.method });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: Simplest - optional chaining in multiline await
+#[test]
+fn test_async_optional_chaining_simplest() {
+    // Simplest: optional chaining in multiline await object
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.b = async function(x: any): Promise<any> {
+    return await order({
+        method: x?.method
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: Optional chaining in await - no first function
+#[test]
+fn test_async_optional_chaining_no_first_func() {
+    // Just one async function with optional chaining
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.b = async function(x?: { method?: string }): Promise<any> {
+    return await order({
+        method: x?.method
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: Optional chaining in await - minimal
+#[test]
+fn test_async_optional_chaining_minimal() {
+    // Minimal reproduction: optional chaining in await object
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(x?: { method?: string }): Promise<any> {
+    return await order({
+        method: x?.method
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: Optional chaining in multiline await
+#[test]
+fn test_async_optional_chaining_in_await() {
+    // Optional chaining (x?.method) in multiline await object
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(x?: {
+    method?: string;
+    body?: string;
+    headers?: string;
+}): Promise<any> {
+    return await order({
+        type: "b",
+        method: x?.method
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: Three props in type, two in await
+#[test]
+fn test_async_three_type_two_await() {
+    // Three props in multiline type, two in multiline await
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(x?: {
+    method?: string;
+    body?: string;
+    headers?: string;
+}): Promise<any> {
+    return await order({
+        type: "b",
+        extra: "value"
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: Two props in multiline type
+#[test]
+fn test_async_two_props_multiline_type() {
+    // Two props in multiline type annotation
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(x?: {
+    method?: string;
+    body?: string;
+}): Promise<any> {
+    return await order({
+        type: "b"
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: Minimal multiline type and await
+#[test]
+fn test_async_minimal_multiline_type_and_await() {
+    // Minimal multiline type (2 props) and multiline await (2 props)
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(x?: {
+    method?: string;
+}): Promise<any> {
+    return await order({
+        type: "b"
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: No url param but multiline type and await
+#[test]
+fn test_async_no_url_multiline_type_and_await() {
+    // No url param, just optional multiline type and multiline await
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(x?: {
+    method?: string;
+    body?: string;
+    headers?: string;
+}): Promise<any> {
+    return await order({
+        type: "b",
+        method: x?.method
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: No Record but with multiline await
+#[test]
+fn test_async_no_record_multiline_await() {
+    // Three string properties (no Record) but multiline await
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(url: string, x?: {
+    method?: string;
+    body?: string;
+    headers?: string;
+}): Promise<any> {
+    return await order({
+        type: "b",
+        url: url,
+        method: x?.method
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: Record type with simple await
+#[test]
+fn test_async_record_with_simple_await() {
+    // Record type but simple await (not multiline)
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(url: string, x?: {
+    method?: string;
+    body?: string;
+    headers?: Record<string, string>;
+}): Promise<any> {
+    return await order({ type: "b" });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: Record type and multiline await
+#[test]
+fn test_async_record_and_multiline_await() {
+    // Record type plus multiline await
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(url: string, x?: {
+    method?: string;
+    body?: string;
+    headers?: Record<string, string>;
+}): Promise<any> {
+    return await order({
+        type: "b",
+        url: url,
+        method: x?.method
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: url param and three properties in type annotation
+#[test]
+fn test_async_url_and_three_props_in_type() {
+    // Second function has url param plus 3 properties in type annotation
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(url: string, x?: {
+    method?: string;
+    body?: string;
+    headers?: string;
+}): Promise<any> {
+    return await order({ type: "b" });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: three properties in type annotation
+#[test]
+fn test_async_three_props_in_type() {
+    // Second function has 3 properties in type annotation
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(x?: {
+    method?: string;
+    body?: string;
+    headers?: string;
+}): Promise<any> {
+    return await order({ type: "b" });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: multiline await argument
+#[test]
+fn test_async_multiline_await_arg() {
+    // Second function has multiline object as argument to await
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(x?: {
+    y?: string;
+}): Promise<any> {
+    return await order({
+        type: "b",
+        something: "else"
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: function with param then multiline type
+#[test]
+fn test_async_with_param_then_multiline() {
+    // First function has parameter, second has multiline type
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(ms: number): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(x?: {
+    y?: string;
+}): Promise<any> {
+    return await order({ type: "b" });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: simple function then multiline type - MINIMAL REPRODUCTION
+#[test]
+fn test_async_simple_then_multiline_minimal() {
+    // MINIMAL: simple async function, then one with multiline type annotation
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.a = async function(): Promise<void> {
+    await order({ type: "a" });
+};
+
+globalThis.b = async function(x?: {
+    y?: string;
+}): Promise<any> {
+    return await order({ type: "b" });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof b"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: sleep then multiline fetch (exact original order)
+#[test]
+fn test_async_sleep_then_multiline_fetch() {
+    // Test with sleep first, then fetch with multiline type
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.sleep = async function(ms: number): Promise<void> {
+    await order({ type: "sleep", delay: ms });
+};
+
+globalThis.fetch = async function(url: string, options?: {
+    method?: string;
+    body?: string;
+    headers?: Record<string, string>;
+}): Promise<any> {
+    return await order({
+        type: "fetch",
+        url: url,
+        method: options?.method || "GET",
+        body: options?.body
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof fetch"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: two async functions - second one after multiline type
+#[test]
+fn test_async_two_funcs_multiline_type_first() {
+    // Test with multiline type annotation, then another async function
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.fetch = async function(options?: {
+    method?: string;
+}): Promise<any> {
+    return await order({ type: "fetch" });
+};
+
+globalThis.readFile = async function(path: string): Promise<string> {
+    return await order({ type: "readFile", path: path });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof readFile"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: async function with Record type annotation
+#[test]
+fn test_async_function_in_source_module_with_record_type() {
+    // Test with Record type annotation
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.fetch = async function(options?: {
+    headers?: Record<string, string>;
+}): Promise<any> {
+    return await order({ type: "fetch" });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof fetch"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: async function with multiline object type annotation
+#[test]
+fn test_async_function_in_source_module_with_multiline_type() {
+    // Test with multiline object type annotation
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.fetch = async function(options?: {
+    method?: string;
+    body?: string;
+}): Promise<any> {
+    return await order({ type: "fetch" });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof fetch"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: async function with object type annotation - two properties same line
+#[test]
+fn test_async_function_in_source_module_with_object_type_two_props() {
+    // Test with object type annotation - two properties on same line
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.fetch = async function(options?: { method?: string; body?: string }): Promise<any> {
+    return await order({ type: "fetch" });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof fetch"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: async function with object type annotation
+#[test]
+fn test_async_function_in_source_module_with_object_type() {
+    // Test with object type annotation - single property
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.fetch = async function(options?: { method?: string }): Promise<any> {
+    return await order({ type: "fetch" });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof fetch"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: async function with complex type annotation
+#[test]
+fn test_async_function_in_source_module_with_complex_type() {
+    // Test with complex type annotation
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.fetch = async function(url: string, options?: {
+    method?: string;
+    body?: string;
+    headers?: Record<string, string>;
+}): Promise<any> {
+    return await order({
+        type: "fetch",
+        url: url,
+        method: options?.method || "GET",
+        body: options?.body
+    });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    interp
+        .prepare(r#"import "eval:globals"; typeof fetch"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+// Regression: async function in source module with import (exact orders setup)
+#[test]
+fn test_async_function_in_source_module_with_import() {
+    // Testing with 5-line object literal
+    const GLOBALS_SOURCE: &str = r#"
+import { order } from "tsrun:host";
+
+globalThis.sleep = async function(ms: number): Promise<void> {
+    await order({ type: "sleep", delay: ms });
+};
+
+globalThis.fetch = async function(url: string, options?: {
+    method?: string;
+    body?: string;
+    headers?: Record<string, string>;
+}): Promise<any> {
+    return await order({
+        type: "fetch",
+        url: url,
+        method: options?.method || "GET",
+        body: options?.body
+    });
+};
+
+globalThis.readFile = async function(path: string): Promise<string> {
+    return await order({ type: "readFile", path: path });
+};
+
+globalThis.writeFile = async function(path: string, content: string): Promise<string> {
+    return await order({ type: "writeFile", path: path, content: content });
+};
+"#;
+
+    let config = InterpreterConfig {
+        internal_modules: vec![
+            create_eval_internal_module(),
+            InternalModule::source("eval:globals", GLOBALS_SOURCE),
+        ],
+        ..Default::default()
+    };
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
+
+    // Import the globals module
+    interp
+        .prepare(r#"import "eval:globals"; typeof sleep"#, None)
+        .expect("prepare should succeed");
+
+    let result = run_to_completion(&mut interp).expect("run should succeed");
+    match result {
+        tsrun::StepResult::Complete(rv) => {
+            assert_eq!(*rv, JsValue::String("function".into()));
+        }
+        other => panic!("Expected Complete, got {:?}", other),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

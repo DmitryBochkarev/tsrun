@@ -27,6 +27,7 @@ mod scheme;
 mod sequence;
 mod skip_test;
 mod sparse_array;
+mod nested_postfix;
 mod zero_or_more;
 
 pub use arithmetic::grammar as arithmetic;
@@ -62,4 +63,5 @@ pub use scheme::grammar as scheme;
 pub use sequence::grammar as sequence;
 pub use skip_test::grammar as skip_test;
 pub use sparse_array::grammar as sparse_array;
+pub use nested_postfix::grammar as nested_postfix;
 pub use zero_or_more::grammar as zero_or_more;

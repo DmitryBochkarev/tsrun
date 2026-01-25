@@ -135,6 +135,11 @@ fn main() {
         "pratt_in_list_ts_parser",
         &grammars::pratt_in_list_ts().generate(),
     );
+    write_parser(
+        out_path,
+        "nested_postfix_parser",
+        &grammars::nested_postfix().generate(),
+    );
 
     // Tell Cargo to rerun if trampoline-parser or grammars change
     println!("cargo:rerun-if-changed=../trampoline-parser/src");

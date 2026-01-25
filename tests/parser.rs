@@ -2767,6 +2767,313 @@ fn test_optional_chain_method_call() {
     assert_eq!(prog.body.len(), 1);
 }
 
+// Regression: debug parse errors
+#[test]
+fn test_debug_parse_error() {
+    // Test various patterns to find what exact combination fails
+    let test_cases = [
+        // Context: parenthesized object
+        ("({ a: 1 })", "parens obj + literal"),
+        ("({ a: x })", "parens obj + ident"),
+        ("({ a: x.y })", "parens obj + member"),  // FAILS
+        ("({ a: f() })", "parens obj + call"),     // FAILS
+        ("({ a: x[0] })", "parens obj + index"),   // FAILS
+        ("({ a: 1 + 2 })", "parens obj + binary"), // infix
+        ("({ a: -x })", "parens obj + unary"),     // prefix
+
+        // Context: assignment RHS
+        ("o = { a: 1 }", "assign obj + literal"),
+        ("o = { a: x }", "assign obj + ident"),
+        ("o = { a: x.y }", "assign obj + member"),  // FAILS
+        ("o = { a: 1 + 2 }", "assign obj + binary"),
+
+        // Context: variable declaration
+        ("let o = { a: x.y }", "vardecl obj + member"), // works!
+        ("let o = { a: 1 + 2 }", "vardecl obj + binary"),
+
+        // Context: comparison
+        ("({ a: x.y }) === 1", "parens obj member + compare"),
+    ];
+
+    for (input, desc) in test_cases {
+        let mut dict = StringDict::new();
+        let result = Parser::new(input, &mut dict).parse_program();
+        match result {
+            Ok(prog) => {
+                let status = if prog.body.len() == 1 { "OK" } else { "FAIL (0 stmts)" };
+                eprintln!("{}: {} - {}", desc, status, input);
+            }
+            Err(e) => eprintln!("{}: ERROR {:?} - {}", desc, e, input),
+        }
+    }
+}
+
+// Debug: show actual parse error
+#[test]
+fn test_debug_show_error() {
+    let input = "({ a: x.y })";
+    let mut dict = StringDict::new();
+    let mut parser = Parser::new(input, &mut dict);
+    let result = parser.parse_program();
+
+    eprintln!("Input: {}", input);
+    eprintln!("Result: {:?}", result);
+
+    // Also try direct expression parsing at various positions
+    eprintln!("\n--- Trying simpler subexpressions ---");
+
+    // Just identifier
+    let mut dict = StringDict::new();
+    let mut p1 = Parser::new("x", &mut dict);
+    eprintln!("'x': {:?}", p1.parse_program());
+
+    // Member access
+    let mut dict = StringDict::new();
+    let mut p2 = Parser::new("x.y", &mut dict);
+    eprintln!("'x.y': {:?}", p2.parse_program());
+
+    // Parenthesized member
+    let mut dict = StringDict::new();
+    let mut p3 = Parser::new("(x.y)", &mut dict);
+    eprintln!("'(x.y)': {:?}", p3.parse_program());
+
+    // Object literal without parens
+    let mut dict = StringDict::new();
+    let mut p4 = Parser::new("let o = { a: x.y }", &mut dict);
+    eprintln!("'let o = {{ a: x.y }}': {:?}", p4.parse_program().map(|p| p.body.len()));
+
+    // Empty object in parens
+    let mut dict = StringDict::new();
+    let mut p5 = Parser::new("({})", &mut dict);
+    eprintln!("'({{}})': {:?}", p5.parse_program().map(|p| p.body.len()));
+
+    // Object with simple value in parens
+    let mut dict = StringDict::new();
+    let mut p6 = Parser::new("({ a: 1 })", &mut dict);
+    eprintln!("'({{ a: 1 }})': {:?}", p6.parse_program().map(|p| p.body.len()));
+
+    // Object with member value WITHOUT parens - this should work
+    let mut dict = StringDict::new();
+    let mut p7 = Parser::new("{ a: x.y }", &mut dict);
+    let r7 = p7.parse_program();
+    eprintln!("'{{ a: x.y }}': {} statements, body: {:?}", r7.as_ref().map(|p| p.body.len()).unwrap_or(0), r7.as_ref().ok().map(|p| &p.body));
+
+    // Compare: simple member in function return
+    let mut dict = StringDict::new();
+    let mut p8 = Parser::new("function f() { return x.y }", &mut dict);
+    eprintln!("'function f() {{ return x.y }}': {:?}", p8.parse_program().map(|p| p.body.len()));
+
+    // Object with member in function return
+    let mut dict = StringDict::new();
+    let mut p9 = Parser::new("function f() { return { a: x.y } }", &mut dict);
+    eprintln!("'function f() {{ return {{ a: x.y }} }}': {:?}", p9.parse_program().map(|p| p.body.len()));
+
+    // Test labeled statement specifically
+    let mut dict = StringDict::new();
+    let mut p10 = Parser::new("{ a: x }", &mut dict);
+    eprintln!("'{{ a: x }}' (labeled, no member): {:?}", p10.parse_program().map(|p| p.body.len()));
+
+    // Member access at top level
+    let mut dict = StringDict::new();
+    let mut p11 = Parser::new("a.b", &mut dict);
+    eprintln!("'a.b' (top level): {:?}", p11.parse_program().map(|p| p.body.len()));
+
+    // Block with member access
+    let mut dict = StringDict::new();
+    let mut p12 = Parser::new("{ a.b }", &mut dict);
+    eprintln!("'{{ a.b }}' (in block): {:?}", p12.parse_program().map(|p| p.body.len()));
+
+    // Block with simple expr
+    let mut dict = StringDict::new();
+    let mut p13 = Parser::new("{ x }", &mut dict);
+    eprintln!("'{{ x }}' (in block): {:?}", p13.parse_program().map(|p| p.body.len()));
+
+    // Block with member + semicolon
+    let mut dict = StringDict::new();
+    let mut p14 = Parser::new("{ a.b; }", &mut dict);
+    eprintln!("'{{ a.b; }}' (member + semicolon): {:?}", p14.parse_program().map(|p| p.body.len()));
+
+    // Block with call
+    let mut dict = StringDict::new();
+    let mut p15 = Parser::new("{ a.b() }", &mut dict);
+    let r15 = p15.parse_program();
+    eprintln!("'{{ a.b() }}' (call): {:?}", r15.as_ref().map(|p| p.body.len()));
+    eprintln!("'{{ a.b() }}' FULL: {:?}", r15);
+
+    // Block with binary expr
+    let mut dict = StringDict::new();
+    let mut p16 = Parser::new("{ a + b }", &mut dict);
+    eprintln!("'{{ a + b }}' (binary): {:?}", p16.parse_program().map(|p| p.body.len()));
+
+    // Check member access with longer chains
+    let mut dict = StringDict::new();
+    let mut p17 = Parser::new("{ a.b.c }", &mut dict);
+    eprintln!("'{{ a.b.c }}' (chain): {:?}", p17.parse_program().map(|p| p.body.len()));
+
+    // Check with just 'a.' - partial member
+    let mut dict = StringDict::new();
+    let mut p18 = Parser::new("a.", &mut dict);
+    eprintln!("'a.' (incomplete): {:?}", p18.parse_program());
+
+    // Block and then statement after
+    let mut dict = StringDict::new();
+    let mut p19 = Parser::new("{ } a.b", &mut dict);
+    eprintln!("'{{ }} a.b' (after block): {:?}", p19.parse_program().map(|p| p.body.len()));
+
+    // If statement with member
+    let mut dict = StringDict::new();
+    let mut p20 = Parser::new("if (true) a.b", &mut dict);
+    eprintln!("'if (true) a.b': {:?}", p20.parse_program().map(|p| p.body.len()));
+
+    // Full AST of { a.b }
+    let mut dict = StringDict::new();
+    let mut p21 = Parser::new("{ a.b }", &mut dict);
+    let r21 = p21.parse_program();
+    eprintln!("'{{ a.b }}' FULL AST: {:?}", r21);
+
+    // Full AST of { a.b; }
+    let mut dict = StringDict::new();
+    let mut p22 = Parser::new("{ a.b; }", &mut dict);
+    let r22 = p22.parse_program();
+    eprintln!("'{{ a.b; }}' FULL AST: {:?}", r22);
+
+    // Test without spaces to eliminate whitespace issues
+    let mut dict = StringDict::new();
+    let mut p23 = Parser::new("{a+b}", &mut dict);
+    eprintln!("'{{a+b}}' (no spaces): {:?}", p23.parse_program().map(|p| p.body.len()));
+
+    let mut dict = StringDict::new();
+    let mut p24 = Parser::new("{a.b}", &mut dict);
+    eprintln!("'{{a.b}}' (no spaces): {:?}", p24.parse_program().map(|p| p.body.len()));
+
+    // Test with space only after expression
+    let mut dict = StringDict::new();
+    let mut p25 = Parser::new("{a.b }", &mut dict);
+    eprintln!("'{{a.b }}' (space before close): {:?}", p25.parse_program().map(|p| p.body.len()));
+
+    let mut dict = StringDict::new();
+    let mut p26 = Parser::new("{a+b }", &mut dict);
+    eprintln!("'{{a+b }}' (space before close): {:?}", p26.parse_program().map(|p| p.body.len()));
+
+    // Detailed postfix vs infix comparison
+    let mut dict = StringDict::new();
+    let mut p27 = Parser::new("{ a.b }", &mut dict);  // spaces around
+    eprintln!("'{{ a.b }}' (spaces around): {:?}", p27.parse_program().map(|p| p.body.len()));
+
+    let mut dict = StringDict::new();
+    let mut p28 = Parser::new("{ a+b }", &mut dict);  // spaces around
+    eprintln!("'{{ a+b }}' (spaces around): {:?}", p28.parse_program().map(|p| p.body.len()));
+
+    // Check if Pratt parser ends at different positions
+    let mut dict = StringDict::new();
+    let mut p29 = Parser::new("a.b}", &mut dict);  // member followed by }
+    eprintln!("'a.b}}' (member then close): {:?}", p29.parse_program().map(|p| p.body.len()));
+
+    let mut dict = StringDict::new();
+    let mut p30 = Parser::new("a+b}", &mut dict);  // binary followed by }
+    eprintln!("'a+b}}' (binary then close): {:?}", p30.parse_program().map(|p| p.body.len()));
+
+    // Full AST for { a+b } to see what's different
+    let mut dict = StringDict::new();
+    let mut p31 = Parser::new("{ a+b }", &mut dict);
+    let r31 = p31.parse_program();
+    eprintln!("'{{ a+b }}' FULL AST: {:?}", r31);
+
+    // Full AST for {a.b } (space before close only)
+    let mut dict = StringDict::new();
+    let mut p32 = Parser::new("{a.b }", &mut dict);
+    let r32 = p32.parse_program();
+    eprintln!("'{{a.b }}' FULL AST: {:?}", r32);
+
+    // Test class expression
+    let mut dict = StringDict::new();
+    let mut p33 = Parser::new("const Foo = class { };", &mut dict);
+    let r33 = p33.parse_program();
+    eprintln!("'const Foo = class {{ }};' FULL AST: {:?}", r33);
+
+    // Test more detailed class expression
+    let mut dict = StringDict::new();
+    let mut p34 = Parser::new("const Foo = class { getValue() { return 1; } };", &mut dict);
+    let r34 = p34.parse_program();
+    eprintln!("'const Foo = class {{ getValue() {{ }} }};' result: {:?}", r34.as_ref().map(|p| p.body.len()));
+
+    // Simple class expression
+    let mut dict = StringDict::new();
+    let mut p35 = Parser::new("const x = class { }", &mut dict);
+    let r35 = p35.parse_program();
+    eprintln!("'const x = class {{ }}' FULL: {:?}", r35);
+
+    // Compare with simpler expression
+    let mut dict = StringDict::new();
+    let mut p36 = Parser::new("const x = 5", &mut dict);
+    let r36 = p36.parse_program();
+    eprintln!("'const x = 5' FULL: {:?}", r36);
+
+    // Call expression without member
+    let mut dict = StringDict::new();
+    let mut p37 = Parser::new("{ f() }", &mut dict);
+    let r37 = p37.parse_program();
+    eprintln!("'{{ f() }}' FULL: {:?}", r37);
+
+    // Call expression with semicolon
+    let mut dict = StringDict::new();
+    let mut p38 = Parser::new("{ a.b(); }", &mut dict);
+    let r38 = p38.parse_program();
+    eprintln!("'{{ a.b(); }}': {:?}", r38.as_ref().map(|p| p.body.len()));
+}
+
+// Regression: member access inside object literal value - BUG FOUND
+#[test]
+fn test_member_access_in_object_literal() {
+    // Test: parens matter!
+
+    // Object WITHOUT parens - works
+    eprintln!("\n=== Test: let o = {{ a: x.y }} ===");
+    let prog1 = parse("let o = { a: x.y }");
+    eprintln!("let o = {{ a: x.y }}: {} statements", prog1.body.len());
+
+    // Object WITH parens but simple value - works
+    eprintln!("\n=== Test: ({{ a: x }}) ===");
+    let prog2 = parse("({ a: x })");
+    eprintln!("({{ a: x }}): {} statements", prog2.body.len());
+
+    // Object WITH parens and member access - FAILS
+    eprintln!("\n=== Test: ({{ a: x.y }}) ===");
+    let prog3 = parse("({ a: x.y })");
+    eprintln!("({{ a: x.y }}): {} statements", prog3.body.len());
+
+    // Member access in parens (no object literal) - works?
+    eprintln!("\n=== Test: (x.y) ===");
+    let prog4 = parse("(x.y)");
+    eprintln!("(x.y): {} statements", prog4.body.len());
+
+    // Nested parens around object - does it make a difference?
+    eprintln!("\n=== Test: (({{ a: x.y }})) ===");
+    let prog5 = parse("(({}))");
+    eprintln!("(({{}})) (empty): {} statements", prog5.body.len());
+
+    // Just object in expression position (like return)
+    eprintln!("\n=== Test: return {{ a: x.y }} ===");
+    let prog6 = parse("function f() { return { a: x.y } }");
+    eprintln!("return {{ a: x.y }}: {} statements", prog6.body.len());
+
+    // Arrow function returning object - special case
+    eprintln!("\n=== Test: () => ({{ a: x.y }}) ===");
+    let prog7 = parse("() => ({ a: x.y })");
+    eprintln!("() => ({{ a: x.y }}): {} statements", prog7.body.len());
+
+    // Just the object inside return
+    eprintln!("\n=== Test: {{ a: x.y }} as expr statement ===");
+    let prog8 = parse("{ a: x.y }");
+    eprintln!("{{ a: x.y }} (block): {} statements", prog8.body.len());
+
+    // Assertions
+    assert_eq!(prog1.body.len(), 1, "let o = {{ a: x.y }} should parse");
+    assert_eq!(prog2.body.len(), 1, "({{ a: x }}) should parse");
+    assert_eq!(prog3.body.len(), 1, "({{ a: x.y }}) should parse");
+    assert_eq!(prog4.body.len(), 1, "(x.y) should parse");
+}
+
 // Regression: async arrow with await
 #[test]
 fn test_async_arrow_with_await() {
@@ -2903,3 +3210,54 @@ fn test_parse_side_effect_import() {
     assert_eq!(import.source.value.as_ref(), "./polyfill");
 }
 
+// Regression: async function expression in member assignment
+#[test]
+fn test_async_function_in_member_assignment() {
+    let prog = parse("globalThis.sleep = async function(ms: number): Promise<void> {};");
+    assert_eq!(prog.body.len(), 1);
+    match &prog.body[0] {
+        Statement::Expression(expr) => {
+            if let Expression::Assignment(_) = expr.expression.as_ref() {
+                // Good - it's an assignment
+            } else {
+                panic!("Expected assignment expression, got {:?}", std::mem::discriminant(expr.expression.as_ref()));
+            }
+        }
+        other => panic!("Expected expression statement, got {:?}", std::mem::discriminant(other)),
+    }
+}
+
+// Regression: postfix member access missing trailing whitespace in ASI context
+#[test]
+fn test_postfix_member_in_block_asi() {
+    // Member access in block without semicolon (relies on ASI)
+    let prog = parse("{ a.b }");
+    assert_eq!(prog.body.len(), 1, "Should parse block with member access");
+}
+
+// Regression: call expression missing trailing whitespace in ASI context
+#[test]
+fn test_call_expression_in_block_asi() {
+    // Call expression in block without semicolon (relies on ASI)
+    let prog = parse("{ f() }");
+    assert_eq!(prog.body.len(), 1, "Should parse block with call expression");
+
+    // Member call in block without semicolon
+    let prog2 = parse("{ a.b() }");
+    assert_eq!(prog2.body.len(), 1, "Should parse block with member call");
+}
+
+// Regression: class expression not converted to AST
+#[test]
+fn test_class_expression_init() {
+    let prog = parse("const Foo = class { };");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::VariableDeclaration(decl) = &prog.body[0] {
+        assert!(decl.declarations[0].init.is_some(), "Class expression should be captured as init");
+        if let Some(init) = &decl.declarations[0].init {
+            assert!(matches!(init.as_ref(), Expression::Class(_)), "Init should be Class expression");
+        }
+    } else {
+        panic!("Expected variable declaration");
+    }
+}

@@ -171,3 +171,8 @@ pub mod pratt_in_list_postfix_parser {
 pub mod pratt_in_list_ts_parser {
     include!(concat!(env!("OUT_DIR"), "/pratt_in_list_ts_parser.rs"));
 }
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod nested_postfix_parser {
+    include!(concat!(env!("OUT_DIR"), "/nested_postfix_parser.rs"));
+}

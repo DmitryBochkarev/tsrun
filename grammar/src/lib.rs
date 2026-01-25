@@ -1568,6 +1568,44 @@ fn create_class_decl(
     }))))
 }
 
+/// Create class expression
+fn create_class_expr(
+    name: ParseResult,
+    extends_clause: ParseResult,
+    body: ParseResult,
+    span: Span
+) -> Result<ParseResult, ParseError> {
+    let id = match name {
+        ParseResult::Ident(id) => Some(id),
+        _ => None,
+    };
+
+    // Extract super class from extends clause
+    let super_class = match extends_clause {
+        ParseResult::List(parts) => {
+            // [extends, expr]
+            parts.into_iter().nth(1).and_then(|e| to_expr(e).ok()).map(Rc::new)
+        }
+        _ => None,
+    };
+
+    // Extract class body
+    let class_body = match body {
+        ParseResult::ClassBody(b) => b,
+        _ => ClassBody { members: vec![], span: span.clone() },
+    };
+
+    Ok(ParseResult::Expr(Expression::Class(Box::new(ClassExpression {
+        id,
+        type_parameters: None,
+        super_class,
+        implements: vec![],
+        body: class_body,
+        decorators: vec![],
+        span,
+    }))))
+}
+
 /// Create class body from members list
 fn create_class_body(members: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
     let members_vec: Vec<ClassMember> = match members {
@@ -2028,8 +2066,11 @@ fn rule_program(r: &RuleBuilder) -> Combinator {
 fn rule_statement(r: &RuleBuilder) -> Combinator {
     // Each sub-rule should return ParseResult::Stmt, so we just pass through
     // Use vec![] instead of nested choice() tuples to avoid tuple dimension limits
+    // NOTE: Order matters! enum_declaration must come before variable_declaration
+    // because "const enum X" would otherwise parse "const" as var decl with "enum" as identifier
     r.choice(vec![
         r.parse("declare_statement"),
+        r.parse("enum_declaration"), // Before variable_declaration to handle "const enum"
         r.parse("variable_declaration"),
         r.parse("function_declaration"),
         r.parse("class_declaration"),
@@ -2051,7 +2092,6 @@ fn rule_statement(r: &RuleBuilder) -> Combinator {
         r.parse("export_declaration"),
         r.parse("type_alias_declaration"),
         r.parse("interface_declaration"),
-        r.parse("enum_declaration"),
         r.parse("namespace_declaration"),
         r.parse("labeled_statement"),
         r.parse("expression_statement"),
@@ -4477,6 +4517,24 @@ fn rule_class_expression(r: &RuleBuilder) -> Combinator {
         ))),
         r.parse("class_body"),
     ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [class, name?, type_params?, extends?, implements?, body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _class_kw = iter.next();
+            let name = iter.next().unwrap_or(ParseResult::None);
+            let _type_params = iter.next();
+            let extends_clause = iter.next().unwrap_or(ParseResult::None);
+            let _implements = iter.next();
+            let body = iter.next().unwrap_or(ParseResult::None);
+
+            create_class_expr(name, extends_clause, body, span)
+        } else {
+            Err(ParseError::new(\"Expected class expression parts\".to_string(), 0, 0))
+        }
+    }",
+    )
 }
 
 fn rule_template_literal(r: &RuleBuilder) -> Combinator {

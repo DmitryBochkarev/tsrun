@@ -392,7 +392,10 @@ impl<'a> CodeGenerator<'a> {
                     self.line(&format!("{}AfterPostfixCall {{ result_base: usize, min_prec: u8, op_idx: usize, args_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                     self.line(&format!("{}AfterPostfixIndex {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                     self.line(&format!("{}AfterPostfixMember {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
-                    self.line(&format!("{}AfterPostfixRule {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                    // Only define AfterPostfixRule if there are Rule-type postfix ops
+                    if pratt.postfix_ops.iter().any(|op| matches!(op, crate::ir::PostfixOp::Rule { .. })) {
+                        self.line(&format!("{}AfterPostfixRule {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                    }
                 }
 
                 // Ternary work variants
@@ -1349,9 +1352,12 @@ impl<'a> CodeGenerator<'a> {
                 self.line("let count = self.result_stack.len() - list_base;");
                 self.line("if count == 0 {");
                 self.indent += 1;
-                self.line("// First item failed - return empty list");
+                self.line("// First item failed - fail the parse (use optional() wrapper if empty list is valid)");
+                self.line("self.last_error = Some(ParseError::new(\"Expected at least one item\".to_string(), self.line, self.column));");
                 self.indent -= 1;
-                self.line("} else if count % 2 == 0 {");
+                self.line("} else {");
+                self.indent += 1;
+                self.line("if count % 2 == 0 {");
                 self.indent += 1;
                 self.line("// We have items followed by a separator (trailing case)");
                 self.line("// Pop the trailing separator result");
@@ -1363,6 +1369,8 @@ impl<'a> CodeGenerator<'a> {
                     "self.work_stack.push(Work::{}Complete {{ result_base, list_base }});",
                     prefix
                 ));
+                self.indent -= 1;
+                self.line("}");
                 self.indent -= 1;
                 self.line("} else {");
                 self.indent += 1;
@@ -2632,6 +2640,12 @@ impl<'a> CodeGenerator<'a> {
                         escape_string(&close_lit)
                     ));
                     self.indent += 1;
+                    // Skip trailing whitespace after close delimiter (for ASI contexts)
+                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {");
+                    self.indent += 1;
+                    self.line("self.advance();");
+                    self.indent -= 1;
+                    self.line("}");
                     // Empty args - apply mapping
                     self.line(&format!(
                         "self.work_stack.push(Work::{}AfterPostfixCall {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }});",
@@ -2710,6 +2724,12 @@ impl<'a> CodeGenerator<'a> {
                         escape_string(&close_lit)
                     ));
                     self.indent += 1;
+                    // Skip trailing whitespace after close delimiter (for ASI contexts)
+                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {");
+                    self.indent += 1;
+                    self.line("self.advance();");
+                    self.indent -= 1;
+                    self.line("}");
                     // Done with args
                     self.line(&format!(
                         "self.work_stack.push(Work::{}AfterPostfixCall {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }});",
@@ -2796,6 +2816,12 @@ impl<'a> CodeGenerator<'a> {
                     self.line("return Ok(());");
                     self.indent -= 1;
                     self.line("}");
+                    // Skip trailing whitespace after close delimiter (for ASI contexts)
+                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {");
+                    self.indent += 1;
+                    self.line("self.advance();");
+                    self.indent -= 1;
+                    self.line("}");
                     self.line(
                         "let index_expr = self.result_stack.pop().unwrap_or(ParseResult::None);",
                     );
@@ -2846,6 +2872,12 @@ impl<'a> CodeGenerator<'a> {
                     self.indent -= 1;
                     self.line("}");
                     self.line("let prop_name = self.text_result(ident_start, self.pos);");
+                    // Skip trailing whitespace (like the identifier rule does)
+                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {");
+                    self.indent += 1;
+                    self.line("self.advance();");
+                    self.indent -= 1;
+                    self.line("}");
                     self.line("let obj = self.result_stack.pop().unwrap_or(ParseResult::None);");
                     self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
                     self.line("match op_idx {");
