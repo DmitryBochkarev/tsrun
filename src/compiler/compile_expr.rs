@@ -1262,6 +1262,26 @@ impl Compiler {
             return Ok(());
         }
 
+        // If the object is an OptionalChain, we need to use the optional chain path
+        // to properly handle short-circuiting for chained accesses like a?.b.c
+        if matches!(member.object.as_ref(), Expression::OptionalChain(_)) {
+            // Wrap this member access in optional chain compilation
+            let short_circuit_jumps = self.compile_member_expression_optional(member, dst)?;
+            if !short_circuit_jumps.is_empty() {
+                // Jump over the "load undefined" block if we completed normally
+                let skip_undefined = self.builder.emit_jump();
+                // Patch all short-circuit jumps to here
+                for jump in short_circuit_jumps {
+                    self.builder.patch_jump(jump);
+                }
+                // Load undefined as the result
+                self.builder.emit(Op::LoadUndefined { dst });
+                // Patch the skip jump to here
+                self.builder.patch_jump(skip_undefined);
+            }
+            return Ok(());
+        }
+
         // Compile object
         let obj_reg = self.builder.alloc_register()?;
         self.compile_expression(&member.object, obj_reg)?;
@@ -1790,6 +1810,42 @@ impl Compiler {
                         "Private fields not supported on super",
                     ));
                 }
+            }
+        }
+
+        // If the callee is an OptionalChain, we need to use the optional chain path
+        // to properly handle short-circuiting for chained calls like a?.b()
+        if matches!(call.callee.as_ref(), Expression::OptionalChain(_)) {
+            // Wrap this call in optional chain compilation
+            let short_circuit_jumps = self.compile_call_expression_optional(call, dst)?;
+            if !short_circuit_jumps.is_empty() {
+                // Jump over the "load undefined" block if we completed normally
+                let skip_undefined = self.builder.emit_jump();
+                // Patch all short-circuit jumps to here
+                for jump in short_circuit_jumps {
+                    self.builder.patch_jump(jump);
+                }
+                // Load undefined as the result
+                self.builder.emit(Op::LoadUndefined { dst });
+                // Patch the skip jump to here
+                self.builder.patch_jump(skip_undefined);
+            }
+            return Ok(());
+        }
+
+        // If the callee is a member and its object is an OptionalChain, use optional path
+        if let Expression::Member(member) = call.callee.as_ref() {
+            if matches!(member.object.as_ref(), Expression::OptionalChain(_)) {
+                let short_circuit_jumps = self.compile_call_expression_optional(call, dst)?;
+                if !short_circuit_jumps.is_empty() {
+                    let skip_undefined = self.builder.emit_jump();
+                    for jump in short_circuit_jumps {
+                        self.builder.patch_jump(jump);
+                    }
+                    self.builder.emit(Op::LoadUndefined { dst });
+                    self.builder.patch_jump(skip_undefined);
+                }
+                return Ok(());
             }
         }
 

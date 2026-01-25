@@ -2120,6 +2120,21 @@ fn test_bytecode_optional_chain_call_undefined() {
 }
 
 #[test]
+fn test_bytecode_regular_computed_access() {
+    // Regular computed property access (regression test for ?.[)
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            const obj = { a: 42 };
+            const key = 'a';
+            obj[key]
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
 fn test_bytecode_optional_chain_computed() {
     // Optional chaining with computed property
     assert_eq!(

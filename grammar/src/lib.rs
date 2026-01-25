@@ -354,13 +354,22 @@ fn call(callee: ParseResult, args: Vec<ParseResult>, optional: bool, span: Span)
     let arguments = args.into_iter()
         .map(|a| parse_result_to_argument(a))
         .collect::<Result<Vec<_>, ParseError>>()?;
-    Ok(ParseResult::Expr(Expression::Call(Box::new(CallExpression {
+    let call_expr = Expression::Call(Box::new(CallExpression {
         callee: Rc::new(to_expr(callee)?),
         arguments,
         type_arguments: None,
         optional,
-        span,
-    }))))
+        span: span.clone(),
+    }));
+    // Wrap in OptionalChainExpression when optional to enable short-circuit evaluation
+    if optional {
+        Ok(ParseResult::Expr(Expression::OptionalChain(OptionalChainExpression {
+            base: Rc::new(call_expr),
+            span,
+        })))
+    } else {
+        Ok(ParseResult::Expr(call_expr))
+    }
 }
 
 /// Convert ParseResult to Argument (handles spread)
@@ -402,24 +411,42 @@ fn member(obj: ParseResult, prop: JsString, optional: bool, span: Span) -> Resul
     } else {
         MemberProperty::Identifier(Identifier { name: prop, span: span.clone() })
     };
-    Ok(ParseResult::Expr(Expression::Member(Box::new(MemberExpression {
+    let member_expr = Expression::Member(Box::new(MemberExpression {
         object: Rc::new(to_expr(obj)?),
         property,
         computed: false,
         optional,
-        span,
-    }))))
+        span: span.clone(),
+    }));
+    // Wrap in OptionalChainExpression when optional to enable short-circuit evaluation
+    if optional {
+        Ok(ParseResult::Expr(Expression::OptionalChain(OptionalChainExpression {
+            base: Rc::new(member_expr),
+            span,
+        })))
+    } else {
+        Ok(ParseResult::Expr(member_expr))
+    }
 }
 
 /// Create computed member expression
 fn member_computed(obj: ParseResult, expr: ParseResult, optional: bool, span: Span) -> Result<ParseResult, ParseError> {
-    Ok(ParseResult::Expr(Expression::Member(Box::new(MemberExpression {
+    let member_expr = Expression::Member(Box::new(MemberExpression {
         object: Rc::new(to_expr(obj)?),
         property: MemberProperty::Expression(Rc::new(to_expr(expr)?)),
         computed: true,
         optional,
-        span,
-    }))))
+        span: span.clone(),
+    }));
+    // Wrap in OptionalChainExpression when optional to enable short-circuit evaluation
+    if optional {
+        Ok(ParseResult::Expr(Expression::OptionalChain(OptionalChainExpression {
+            base: Rc::new(member_expr),
+            span,
+        })))
+    } else {
+        Ok(ParseResult::Expr(member_expr))
+    }
 }
 
 /// Create tagged template expression: tag`template`
@@ -2036,7 +2063,7 @@ fn rule_variable_declaration(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.capture(r.choice((kw(r, "let"), kw(r, "const"), kw(r, "var")))),
         r.separated_by(r.parse("variable_declarator"), op(r, ",")),
-        r.parse("semicolon"),
+        r.optional(r.parse("semicolon")), // Optional for ASI support
     ))
     .ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         let mut items = result.into_list().into_iter();
@@ -4062,12 +4089,13 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                 // Use argument rule to support spread in function calls
                 .postfix_call_with_arg_rule("?.(", ")", ",", "argument", 18, "|c, a, s| call(c, a, true, s)")
                 .postfix_call_with_arg_rule("(", ")", ",", "argument", 18, "|c, a, s| call(c, a, false, s)")
-                // Member access (optional chaining first to match longer pattern)
-                .postfix_member("?.", 18, "|o, p, s| member(o, p, true, s)")
-                .postfix_member(".", 18, "|o, p, s| member(o, p, false, s)")
-                // Computed member (optional chaining first to match longer pattern)
+                // Computed member (optional chaining first, must come before ?. to match longer pattern)
                 .postfix_index("?.[", "]", 18, "|o, e, s| member_computed(o, e, true, s)")
                 .postfix_index("[", "]", 18, "|o, e, s| member_computed(o, e, false, s)")
+                // Member access (optional chaining first to match longer pattern)
+                // Note: ?. must come after ?.[ to avoid matching prefix of ?.[
+                .postfix_member("?.", 18, "|o, p, s| member(o, p, true, s)")
+                .postfix_member(".", 18, "|o, p, s| member(o, p, false, s)")
                 // Tagged template literals: tag`template`
                 .postfix_rule("template_literal", 18, "|tag, template, s| tagged_template(tag, template, s)")
         }),

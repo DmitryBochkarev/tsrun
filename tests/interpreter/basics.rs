@@ -43,6 +43,12 @@ fn test_paragraph_separator_u2029() {
 }
 
 #[test]
+fn test_asi_with_newline() {
+    // Regular newline should trigger ASI for variable declarations
+    assert_eq!(eval("let x = 1\nx + 1"), JsValue::Number(2.0));
+}
+
+#[test]
 fn test_line_separator_in_statement() {
     // U+2028 should act as line terminator for ASI
     assert_eq!(eval("let x = 1\u{2028}x + 1"), JsValue::Number(2.0));
