@@ -2615,7 +2615,8 @@ fn rule_class_method(r: &RuleBuilder) -> Combinator {
             r.optional(r.parse("parameter_list")),
             op(r, ")"),
             r.optional(r.parse("type_annotation")),
-            r.parse("block_statement"),
+            // Either method body or semicolon (for method signatures in declare classes)
+            r.choice((r.parse("block_statement"), r.optional(r.parse("semicolon")))),
         )),
     )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [decorators, accessibility?, static?, async?, *, get/set?, key, type_params?, method_sig]
@@ -2631,14 +2632,19 @@ fn rule_class_method(r: &RuleBuilder) -> Combinator {
             let _type_params = iter.next();
             let method_sig = iter.next().unwrap_or(ParseResult::None);
 
-            // method_sig = [(, params?, ), type_ann?, body]
+            // method_sig = [(, params?, ), type_ann?, body_or_semi]
             let (params, body) = if let ParseResult::List(sig_parts) = method_sig {
                 let mut sig_iter = sig_parts.into_iter();
                 let _open_paren = sig_iter.next();
                 let params = sig_iter.next().unwrap_or(ParseResult::None);
                 let _close_paren = sig_iter.next();
                 let _type_ann = sig_iter.next();
-                let body = sig_iter.next().unwrap_or(ParseResult::None);
+                let body_or_semi = sig_iter.next().unwrap_or(ParseResult::None);
+                // If it's a BlockStatement, use it; otherwise body is None (method signature)
+                let body = match &body_or_semi {
+                    ParseResult::Stmt(Statement::Block(_)) => body_or_semi,
+                    _ => ParseResult::None,
+                };
                 (params, body)
             } else {
                 (ParseResult::None, ParseResult::None)
@@ -2663,7 +2669,8 @@ fn rule_class_property(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("type_annotation")),
         // Use assignment_expression to avoid comma being consumed
         r.optional(r.sequence((op(r, "="), r.parse("assignment_expression")))),
-        r.parse("semicolon"),
+        // Semicolon is optional in class properties (ASI)
+        r.optional(r.parse("semicolon")),
     )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [decorators, accessibility?, static?, readonly?, accessor?, key, ?, type_ann?, init?, ;]
         if let ParseResult::List(parts) = result {

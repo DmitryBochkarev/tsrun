@@ -3372,3 +3372,17 @@ fn test_class_expression_extends_named() {
         panic!("Expected variable declaration");
     }
 }
+
+// Regression: class property without semicolon (ASI)
+#[test]
+fn test_class_property_without_semicolon() {
+    let prog = parse("class Buffer { x: number }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: method signature in declare class
+#[test]
+fn test_declare_class_method_signature() {
+    let prog = parse("declare class Buffer { static from(str: string): Buffer; }");
+    assert_eq!(prog.body.len(), 1);
+}
