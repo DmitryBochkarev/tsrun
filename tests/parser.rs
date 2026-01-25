@@ -451,13 +451,14 @@ fn test_switch_statement_single_case() {
     assert!(matches!(&prog.body[0], Statement::Switch(_)));
 }
 
-// TODO: Switch with multiple cases fails to parse - tracked as parser bug
-// The issue is in zero_or_more(switch_case) handling
-// #[test]
-// fn test_switch_statement_multiple_cases() {
-//     let prog = parse("switch (x) { case 1: break; case 2: return; }");
-//     assert!(matches!(&prog.body[0], Statement::Switch(_)));
-// }
+// Regression: switch with multiple cases - fixed by adding negative lookahead
+// for case/default keywords in switch_case consequent parsing
+#[test]
+fn test_switch_statement_multiple_cases() {
+    let prog = parse("switch (x) { case 1: case 2: }");
+    assert_eq!(prog.body.len(), 1);
+    assert!(matches!(prog.body.first(), Some(Statement::Switch(_))));
+}
 
 #[test]
 fn test_try_catch_finally() {
@@ -1413,6 +1414,29 @@ fn test_parse_class_decorator_basic() {
         panic!("Expected class declaration");
     };
     assert_eq!(class.decorators.len(), 1);
+}
+
+#[test]
+fn test_parse_abstract_class() {
+    // Abstract class (TypeScript)
+    let prog = parse("abstract class Shape {}");
+    assert_eq!(prog.body.len(), 1);
+    let Statement::ClassDeclaration(class) = &prog.body[0] else {
+        panic!("Expected class declaration");
+    };
+    assert!(class.abstract_);
+}
+
+#[test]
+fn test_parse_abstract_method() {
+    // Abstract method in abstract class
+    let prog = parse("abstract class Shape { abstract getArea(): number; }");
+    assert_eq!(prog.body.len(), 1);
+    let Statement::ClassDeclaration(class) = &prog.body[0] else {
+        panic!("Expected class declaration");
+    };
+    assert!(class.abstract_);
+    assert_eq!(class.body.members.len(), 1);
 }
 
 #[test]
@@ -2400,6 +2424,23 @@ fn test_async_function_declaration() {
     assert!(matches!(prog.body[0], Statement::FunctionDeclaration(_)));
 }
 
+// Regression: catch clause with type annotation
+#[test]
+fn test_catch_type_annotation() {
+    // Catch without type annotation
+    let prog1 = parse("try { throw 1; } catch (e) { }");
+    assert_eq!(prog1.body.len(), 1);
+
+    // Catch with type annotation
+    let prog2 = parse("try { throw 1; } catch (e: any) { }");
+    assert_eq!(prog2.body.len(), 1);
+    if let Statement::Try(try_stmt) = &prog2.body[0] {
+        assert!(try_stmt.handler.is_some(), "Handler should be present");
+    } else {
+        panic!("Expected Try statement");
+    }
+}
+
 #[test]
 fn test_async_method_in_object_literal() {
     // async method in object literal
@@ -2647,5 +2688,117 @@ fn test_unary_minus_with_binary() {
         },
         other => panic!("Expected Expression statement, got: {:?}", other),
     }
+}
+
+// ============================================================================
+// Tests to isolate parser bugs
+// ============================================================================
+
+// Regression: method with return type annotation followed by body containing return
+#[test]
+fn test_method_with_return_type_and_return_statement() {
+    // Simple class method with return type annotation
+    let prog = parse("class C { getValue(): number { return 42; } }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: return class expression (simple)
+#[test]
+fn test_return_class_expression_simple() {
+    let prog = parse("function f() { return class {}; }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: return class expression with method
+#[test]
+fn test_return_class_expression_with_method() {
+    let prog = parse("function f() { return class { getValue() { return 42; } }; }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: return class expression with typed method
+#[test]
+fn test_return_class_expression_with_typed_method() {
+    // This is the failing pattern from test_mixin_simple_class_return
+    let prog = parse("function f() { return class { getValue(): number { return 42; } }; }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: class expression assigned to variable
+#[test]
+fn test_class_expression_assigned_to_variable() {
+    let prog = parse("const C = class { getValue(): number { return 42; } };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: switch statement inside function
+#[test]
+fn test_switch_in_function() {
+    let prog = parse(
+        r#"function f(x) {
+            switch (x) {
+                case 1: return "one";
+                default: return "other";
+            }
+        }"#,
+    );
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: try-catch with throw
+#[test]
+fn test_try_catch_with_throw() {
+    let prog = parse(
+        r#"function f() {
+            try {
+                throw new Error("test");
+            } catch (e) {
+                return e;
+            }
+        }"#,
+    );
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: optional chaining with method call
+#[test]
+fn test_optional_chain_method_call() {
+    let prog = parse("obj?.method()");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: async arrow with await
+#[test]
+fn test_async_arrow_with_await() {
+    let prog = parse("const f = async () => { await Promise.resolve(); };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: class with constructor parameter properties
+#[test]
+fn test_class_constructor_parameter_properties() {
+    let prog = parse("class C { constructor(public x: number, private y: string) {} }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: multiple type declarations at module level
+#[test]
+fn test_multiple_type_declarations() {
+    let prog = parse(
+        r#"
+        interface A { x: number; }
+        interface B { y: string; }
+        const a: A = { x: 1 };
+        const b: B = { y: "test" };
+    "#,
+    );
+    assert_eq!(prog.body.len(), 4);
+}
+
+// Regression: function with destructuring parameter and default
+#[test]
+fn test_function_destructuring_default() {
+    let prog = parse("function f({ x = 1 }: { x?: number } = {}) { return x; }");
+    assert_eq!(prog.body.len(), 1);
 }
 

@@ -36,6 +36,7 @@ pub fn typescript_grammar() -> Grammar {
         .rule("class_body", rule_class_body)
         .rule("class_member", rule_class_member)
         .rule("class_constructor", rule_class_constructor)
+        .rule("abstract_method", rule_abstract_method)
         .rule("class_method", rule_class_method)
         .rule("class_property", rule_class_property)
         .rule("static_block", rule_static_block)
@@ -2212,10 +2213,51 @@ fn rule_class_body(r: &RuleBuilder) -> Combinator {
 fn rule_class_member(r: &RuleBuilder) -> Combinator {
     r.choice((
         r.parse("class_constructor"),
+        r.parse("abstract_method"),  // Must be before class_method
         r.parse("class_method"),
         r.parse("class_property"),
         r.parse("static_block"),
     ))
+}
+
+// Abstract method signature (no body, ends with semicolon)
+fn rule_abstract_method(r: &RuleBuilder) -> Combinator {
+    r.sequence((
+        r.zero_or_more(r.parse("decorator")),
+        r.optional(r.parse("accessibility_modifier")),
+        kw(r, "abstract"),
+        r.optional(kw(r, "async")),
+        r.optional(op(r, "*")),
+        r.parse("property_key"),
+        r.optional(r.parse("type_parameters")),
+        op(r, "("),
+        r.optional(r.parse("parameter_list")),
+        op(r, ")"),
+        r.optional(r.parse("type_annotation")),
+        r.parse("semicolon"),
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [decorators, accessibility?, abstract, async?, *, key, type_params?, (, params?, ), type_ann?, ;]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let decorators = iter.next().unwrap_or(ParseResult::None);
+            let _accessibility = iter.next();
+            let _abstract = iter.next();
+            let async_kw = iter.next().unwrap_or(ParseResult::None);
+            let generator = iter.next().unwrap_or(ParseResult::None);
+            let key = iter.next().unwrap_or(ParseResult::None);
+            let _type_params = iter.next();
+            let _open_paren = iter.next();
+            let params = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next();
+            let _type_ann = iter.next();
+            let _semicolon = iter.next();
+
+            // Create a method with no body (abstract method)
+            create_class_method(decorators, ParseResult::None, async_kw, generator, ParseResult::None, key, params, ParseResult::None, span)
+        } else {
+            Err(ParseError::new(\"Expected abstract method parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_class_constructor(r: &RuleBuilder) -> Combinator {
@@ -2705,7 +2747,11 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
             kw(r, "case"),
             r.parse("expression"),
             op(r, ":"),
-            r.zero_or_more(r.parse("statement")),
+            // Use negative lookahead to prevent consuming case/default keywords as statements
+            r.zero_or_more(r.sequence((
+                r.not_followed_by(r.choice((kw(r, "case"), kw(r, "default")))),
+                r.parse("statement"),
+            ))),
         ))
         .ast(
             "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
@@ -2719,8 +2765,17 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
 
                 let consequent: Vec<Statement> = match consequent_result {
                     ParseResult::List(items) => {
+                        // Each item is [lookahead_result, Stmt] from the sequence
                         items.into_iter().filter_map(|item| {
-                            if let ParseResult::Stmt(s) = item { Some(s) } else { None }
+                            match item {
+                                ParseResult::Stmt(s) => Some(s),
+                                ParseResult::List(inner) => {
+                                    inner.into_iter().find_map(|i| {
+                                        if let ParseResult::Stmt(s) = i { Some(s) } else { None }
+                                    })
+                                }
+                                _ => None,
+                            }
                         }).collect()
                     }
                     ParseResult::Stmt(s) => vec![s],
@@ -2740,7 +2795,11 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
         r.sequence((
             kw(r, "default"),
             op(r, ":"),
-            r.zero_or_more(r.parse("statement")),
+            // Use negative lookahead to prevent consuming case/default keywords as statements
+            r.zero_or_more(r.sequence((
+                r.not_followed_by(r.choice((kw(r, "case"), kw(r, "default")))),
+                r.parse("statement"),
+            ))),
         ))
         .ast(
             "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
@@ -2753,8 +2812,17 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
 
                 let consequent: Vec<Statement> = match consequent_result {
                     ParseResult::List(items) => {
+                        // Each item is [lookahead_result, Stmt] from the sequence
                         items.into_iter().filter_map(|item| {
-                            if let ParseResult::Stmt(s) = item { Some(s) } else { None }
+                            match item {
+                                ParseResult::Stmt(s) => Some(s),
+                                ParseResult::List(inner) => {
+                                    inner.into_iter().find_map(|i| {
+                                        if let ParseResult::Stmt(s) = i { Some(s) } else { None }
+                                    })
+                                }
+                                _ => None,
+                            }
                         }).collect()
                     }
                     ParseResult::Stmt(s) => vec![s],
@@ -2860,7 +2928,13 @@ fn rule_try_statement(r: &RuleBuilder) -> Combinator {
 fn rule_catch_clause(r: &RuleBuilder) -> Combinator {
     r.sequence((
         kw(r, "catch"),
-        r.optional(r.sequence((op(r, "("), r.parse("pattern"), op(r, ")")))),
+        // TypeScript allows optional type annotation: catch (e: any) { ... }
+        r.optional(r.sequence((
+            op(r, "("),
+            r.parse("pattern"),
+            r.optional(r.parse("type_annotation")),
+            op(r, ")"),
+        ))),
         r.parse("block_statement"),
     ))
 }
