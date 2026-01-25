@@ -5714,7 +5714,7 @@ impl BytecodeVM {
                 let dst_val = self.get_reg(dst);
                 let src_val = self.get_reg(src);
 
-                if let (JsValue::Object(dst_obj), JsValue::Object(src_obj)) = (&dst_val, &src_val) {
+                if let (JsValue::Object(dst_obj), JsValue::Object(src_obj)) = (dst_val, src_val) {
                     // Collect properties first to avoid borrow issues
                     let props_to_copy: Vec<_> = {
                         let src_borrowed = src_obj.borrow();

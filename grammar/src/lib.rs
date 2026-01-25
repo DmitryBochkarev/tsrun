@@ -1211,13 +1211,10 @@ fn parse_result_to_object_property(result: ParseResult, span: Span) -> Option<Ob
         }
         ParseResult::List(items) => {
             let len = items.len();
-            // Check for spread: ["...", expression]
+            // Check for spread: [spread_op, expression] where spread_op is List from op(r, "...")
             if len == 2 {
-                // Check if first is the spread operator (peek without consuming)
-                let is_spread = match items.first() {
-                    Some(ParseResult::Text(s, _)) => s.as_ref() == "...",
-                    _ => false,
-                };
+                // Check if first is the spread operator - op(r, "...") produces a List, not Text
+                let is_spread = matches!(items.first(), Some(ParseResult::List(_)));
                 if is_spread {
                     let mut iter = items.into_iter();
                     let _spread_op = iter.next()?;
