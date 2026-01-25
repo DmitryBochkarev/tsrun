@@ -653,12 +653,28 @@ fn extract_param_pattern(item: ParseResult, default_span: &Span) -> Option<Funct
         ParseResult::List(parts) => {
             let mut iter = parts.into_iter();
             let decorators_result = iter.next().unwrap_or(ParseResult::None);
-            let _accessibility = iter.next(); // Skip accessibility
-            let _readonly = iter.next(); // Skip readonly
+            let accessibility_result = iter.next();
+            let readonly_result = iter.next();
             let pattern_result = iter.next()?; // Get pattern
             let _optional = iter.next(); // Skip optional
             let _type_annotation = iter.next(); // Skip type annotation
             let default_result = iter.next(); // Get default value
+
+            // Extract accessibility modifier from captured_kw result
+            // captured_kw produces [Text("public"|"private"|"protected", span), None, None]
+            let accessibility = accessibility_result.and_then(|result| {
+                extract_captured_keyword(&result).and_then(|kw| match kw.as_ref() {
+                    "public" => Some(Accessibility::Public),
+                    "private" => Some(Accessibility::Private),
+                    "protected" => Some(Accessibility::Protected),
+                    _ => None,
+                })
+            });
+
+            // Extract readonly from captured_kw result
+            let readonly = readonly_result
+                .map(|result| extract_captured_keyword(&result).map_or(false, |kw| kw.as_ref() == "readonly"))
+                .unwrap_or(false);
 
             // Try to convert pattern_result to a Pattern
             let mut pattern = match pattern_result {
@@ -691,8 +707,8 @@ fn extract_param_pattern(item: ParseResult, default_span: &Span) -> Option<Funct
                 type_annotation: None,
                 optional: false,
                 decorators,
-                accessibility: None,
-                readonly: false,
+                accessibility,
+                readonly,
                 span: default_span.clone(),
             })
         }
@@ -1331,6 +1347,22 @@ fn is_captured_keyword(result: &ParseResult, keyword: &str) -> bool {
     }
 }
 
+/// Extract the keyword string from a captured_kw result
+/// captured_kw produces [Text("keyword", span), None, None]
+fn extract_captured_keyword(result: &ParseResult) -> Option<JsString> {
+    match result {
+        ParseResult::Text(s, _) => Some(s.clone()),
+        ParseResult::List(parts) => {
+            if let Some(ParseResult::Text(s, _)) = parts.first() {
+                Some(s.clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn parse_method_property(items: Vec<ParseResult>, span: Span) -> Option<ObjectProperty> {
     // Method: [async?, *?, key, "(", params?, ")", block]
     // Getter: ["get", key, "(", ")", type_ann?, block] - 6 items
@@ -1721,11 +1753,12 @@ fn create_class_method(
         span: span.clone(),
     };
 
+    let is_computed = matches!(prop_key, ObjectPropertyKey::Computed(_));
     Ok(ParseResult::ClassMember(ClassMember::Method(Box::new(ClassMethod {
         key: prop_key,
         value: func_expr,
         kind,
-        computed: false,
+        computed: is_computed,
         static_: is_static,
         accessibility: None,
         decorators: parsed_decorators,
@@ -1793,6 +1826,17 @@ fn result_to_prop_key(result: ParseResult, span: &Span) -> ObjectPropertyKey {
                 LiteralValue::String(s) => ObjectPropertyKey::String(StringLiteral { value: s, span: lit.span }),
                 _ => ObjectPropertyKey::Number(*lit),
             }
+        }
+        // Handle computed key: [expression] produces List([op, expression, op])
+        ParseResult::List(parts) => {
+            // Look for an expression in the list (skip ops)
+            for part in parts {
+                if let ParseResult::Expr(e) = part {
+                    return ObjectPropertyKey::Computed(Rc::new(e));
+                }
+            }
+            // Fallback if no expression found
+            ObjectPropertyKey::Identifier(Identifier { name: JsString::from(""), span: span.clone() })
         }
         _ => ObjectPropertyKey::Identifier(Identifier { name: JsString::from(""), span: span.clone() }),
     }
@@ -4778,7 +4822,7 @@ fn rule_parameter(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.zero_or_more(r.parse("decorator")),
         r.optional(r.parse("accessibility_modifier")),
-        r.optional(kw(r, "readonly")),
+        r.optional(captured_kw(r, "readonly")),
         r.parse("pattern"),
         r.optional(op(r, "?")),
         r.optional(r.parse("type_annotation")),
@@ -4788,7 +4832,7 @@ fn rule_parameter(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_accessibility_modifier(r: &RuleBuilder) -> Combinator {
-    r.choice((kw(r, "public"), kw(r, "private"), kw(r, "protected")))
+    r.choice((captured_kw(r, "public"), captured_kw(r, "private"), captured_kw(r, "protected")))
 }
 
 fn rule_decorator(r: &RuleBuilder) -> Combinator {

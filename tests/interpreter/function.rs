@@ -1628,6 +1628,99 @@ fn test_arrow_function_length_descriptor() {
 }
 
 // ============================================================
+// Member chain access tests
+// ============================================================
+
+#[test]
+fn test_member_chain_simple() {
+    // Simple member chain: Array.prototype
+    assert_eq!(
+        eval("typeof Array.prototype"),
+        JsValue::from("object")
+    );
+}
+
+#[test]
+fn test_member_chain_deep() {
+    // Deep member chain: Array.prototype.push
+    assert_eq!(
+        eval("typeof Array.prototype.push"),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_member_chain_in_call_arg() {
+    // Member chain as call argument
+    assert_eq!(
+        eval("(function(f) { return typeof f; })(Array.prototype.push)"),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_function_prototype_call() {
+    // Access Function.prototype.call
+    assert_eq!(
+        eval("typeof Function.prototype.call"),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_function_prototype_call_bind() {
+    // Access Function.prototype.call.bind
+    assert_eq!(
+        eval("typeof Function.prototype.call.bind"),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_member_chain_four_deep() {
+    // Four-level member chain: Function.prototype.call.bind
+    assert_eq!(
+        eval("typeof Function.prototype.call.bind"),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_call_bind_result() {
+    // Call Function.prototype.call.bind(something)
+    assert_eq!(
+        eval("typeof Function.prototype.call.bind(Array.prototype.push)"),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_call_bind_assign_and_use() {
+    // Assign bound function and check its type
+    assert_eq!(
+        eval(r#"
+            var __push = Function.prototype.call.bind(Array.prototype.push);
+            typeof __push
+        "#),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_call_bind_invoke_simple() {
+    // Test invoking a simple bound function
+    assert_eq!(
+        eval(r#"
+            var arr = [1, 2];
+            var bound = Array.prototype.push.bind(arr);
+            bound(3);
+            arr.length
+        "#),
+        JsValue::Number(3.0)
+    );
+}
+
+// ============================================================
 // Function.prototype.call.bind() tests (Test262 propertyHelper pattern)
 // ============================================================
 

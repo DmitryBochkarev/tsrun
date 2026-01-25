@@ -3038,6 +3038,18 @@ fn test_debug_show_error() {
     let mut p38 = Parser::new("{ a.b(); }", &mut dict);
     let r38 = p38.parse_program();
     eprintln!("'{{ a.b(); }}': {:?}", r38.as_ref().map(|p| p.body.len()));
+
+    // Member chain: Array.prototype.push - Bug #6 investigation
+    let mut dict = StringDict::new();
+    let mut p_chain = Parser::new("Array.prototype.push", &mut dict);
+    let r_chain = p_chain.parse_program();
+    eprintln!("'Array.prototype.push' FULL: {:?}", r_chain);
+
+    // Full expression from failing test
+    let mut dict = StringDict::new();
+    let mut p_bind = Parser::new("Function.prototype.call.bind(Array.prototype.push)", &mut dict);
+    let r_bind = p_bind.parse_program();
+    eprintln!("'Function.prototype.call.bind(Array.prototype.push)' FULL: {:?}", r_bind);
 }
 
 // Regression: member access inside object literal value - BUG FOUND
