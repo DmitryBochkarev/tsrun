@@ -216,9 +216,172 @@ fn parse_string_literal(text: &JsString) -> JsString {
     if s.len() < 2 {
         return JsString::from("");
     }
-    let inner = &s[1..s.len()-1];
-    // TODO: Handle escape sequences properly
-    JsString::from(inner)
+    let inner = &s[1..s.len() - 1];
+
+    // Handle escape sequences
+    let mut result = String::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some('b') => result.push('\x08'),
+                Some('f') => result.push('\x0C'),
+                Some('v') => result.push('\x0B'),
+                Some('0') => {
+                    // \0 is null only if not followed by a digit
+                    if chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+                        // Legacy octal - just push '0' for now
+                        result.push('0');
+                    } else {
+                        result.push('\0');
+                    }
+                }
+                Some('x') => {
+                    // \xHH - hex escape
+                    let mut hex = String::new();
+                    for _ in 0..2 {
+                        if let Some(h) = chars.next() {
+                            hex.push(h);
+                        }
+                    }
+                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                        if let Some(ch) = char::from_u32(code) {
+                            result.push(ch);
+                        }
+                    }
+                }
+                Some('u') => {
+                    // \uHHHH or \u{HHHH}
+                    if chars.peek() == Some(&'{') {
+                        chars.next(); // consume '{'
+                        let mut hex = String::new();
+                        while let Some(&h) = chars.peek() {
+                            if h == '}' {
+                                chars.next();
+                                break;
+                            }
+                            chars.next();
+                            hex.push(h);
+                        }
+                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                            if let Some(ch) = char::from_u32(code) {
+                                result.push(ch);
+                            }
+                        }
+                    } else {
+                        // \uHHHH
+                        let mut hex = String::new();
+                        for _ in 0..4 {
+                            if let Some(h) = chars.next() {
+                                hex.push(h);
+                            }
+                        }
+                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                            if let Some(ch) = char::from_u32(code) {
+                                result.push(ch);
+                            }
+                        }
+                    }
+                }
+                Some(other) => {
+                    // Any other escape: \' \" \\ or unrecognized (just pass through)
+                    result.push(other);
+                }
+                None => {
+                    // Trailing backslash - shouldn't happen in valid input
+                    result.push('\\');
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    JsString::from(result)
+}
+
+/// Decode escape sequences in a string (shared by string literals and templates)
+fn decode_escape_sequences(inner: &str) -> JsString {
+    let mut result = String::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some('b') => result.push('\x08'),
+                Some('f') => result.push('\x0C'),
+                Some('v') => result.push('\x0B'),
+                Some('0') => {
+                    if chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+                        result.push('0');
+                    } else {
+                        result.push('\0');
+                    }
+                }
+                Some('x') => {
+                    let mut hex = String::new();
+                    for _ in 0..2 {
+                        if let Some(h) = chars.next() {
+                            hex.push(h);
+                        }
+                    }
+                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                        if let Some(ch) = char::from_u32(code) {
+                            result.push(ch);
+                        }
+                    }
+                }
+                Some('u') => {
+                    if chars.peek() == Some(&'{') {
+                        chars.next();
+                        let mut hex = String::new();
+                        while let Some(&h) = chars.peek() {
+                            if h == '}' {
+                                chars.next();
+                                break;
+                            }
+                            chars.next();
+                            hex.push(h);
+                        }
+                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                            if let Some(ch) = char::from_u32(code) {
+                                result.push(ch);
+                            }
+                        }
+                    } else {
+                        let mut hex = String::new();
+                        for _ in 0..4 {
+                            if let Some(h) = chars.next() {
+                                hex.push(h);
+                            }
+                        }
+                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                            if let Some(ch) = char::from_u32(code) {
+                                result.push(ch);
+                            }
+                        }
+                    }
+                }
+                Some(other) => {
+                    result.push(other);
+                }
+                None => {
+                    result.push('\\');
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    JsString::from(result)
 }
 
 /// Parse a regexp literal: /pattern/flags
@@ -4630,9 +4793,9 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
             // Simple template string `hello`
             let text = items.into_iter().next().unwrap_or(ParseResult::None).into_text();
             let text_str = text.as_ref();
-            // Remove backticks from both ends
+            // Remove backticks from both ends and decode escapes
             let content: JsString = if text_str.starts_with('`') && text_str.ends_with('`') && text_str.len() >= 2 {
-                text_str[1..text_str.len()-1].into()
+                decode_escape_sequences(&text_str[1..text_str.len()-1])
             } else {
                 text
             };
@@ -4658,10 +4821,10 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
             let mut quasis = Vec::new();
             let mut expressions = vec![first_expr];
 
-            // Parse head: `xxx${  ->  xxx
+            // Parse head: `xxx${  ->  xxx (and decode escapes)
             let head_str = head_text.as_ref();
             let head_content: JsString = if head_str.starts_with('`') && head_str.ends_with(\"${\") && head_str.len() >= 3 {
-                head_str[1..head_str.len()-2].into()
+                decode_escape_sequences(&head_str[1..head_str.len()-2])
             } else {
                 head_text
             };
@@ -4680,10 +4843,10 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
                         let _ws = part_iter.next();
                         let expr = to_expr(part_iter.next().unwrap_or(ParseResult::None))?;
 
-                        // Parse middle: }xxx${  ->  xxx
+                        // Parse middle: }xxx${  ->  xxx (and decode escapes)
                         let middle_str = middle_text.as_ref();
                         let middle_content: JsString = if middle_str.starts_with('}') && middle_str.ends_with(\"${\") && middle_str.len() >= 3 {
-                            middle_str[1..middle_str.len()-2].into()
+                            decode_escape_sequences(&middle_str[1..middle_str.len()-2])
                         } else {
                             middle_text
                         };
@@ -4697,10 +4860,10 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
                 }
             }
 
-            // Parse tail: }xxx`  ->  xxx
+            // Parse tail: }xxx`  ->  xxx (and decode escapes)
             let tail_str = tail_text.as_ref();
             let tail_content: JsString = if tail_str.starts_with('}') && tail_str.ends_with('`') && tail_str.len() >= 2 {
-                tail_str[1..tail_str.len()-1].into()
+                decode_escape_sequences(&tail_str[1..tail_str.len()-1])
             } else {
                 tail_text
             };
