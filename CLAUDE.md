@@ -75,6 +75,7 @@ Common causes of infinite loops in trampoline-parser:
 ## Development Rules
 
 - **Always use the Edit tool** - never shell commands like `echo >>` to modify files
+- **Always use Read/Glob/Grep tools** - never `cat`, `sed`, `awk`, `head`, `tail`, or `find` for file operations
 - **Use haiku agents for bulk changes** - for repetitive edits across multiple files (renames, pattern replacements), spawn Task agents with `model: "haiku"` instead of using sed/awk
 - **Use TypeScript annotations in tests** - types are stripped at runtime but tests should use proper syntax
 - **No tech debt** - fix failing tests immediately, no TODO/FIXME for known bugs
