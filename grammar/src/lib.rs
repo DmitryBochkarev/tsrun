@@ -1608,8 +1608,19 @@ fn create_class_expr(
     body: ParseResult,
     span: Span
 ) -> Result<ParseResult, ParseError> {
+    // Name might be: Ident directly, or List([None, None, None, Ident]) from not_followed_by sequence
     let id = match name {
         ParseResult::Ident(id) => Some(id),
+        ParseResult::List(parts) => {
+            // Find the identifier in the list (skip None entries from not_followed_by)
+            parts.into_iter().find_map(|p| {
+                if let ParseResult::Ident(id) = p {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+        }
         _ => None,
     };
 
@@ -4557,7 +4568,13 @@ fn rule_class_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.zero_or_more(r.parse("decorator")),
         kw(r, "class"),
-        r.optional(r.parse("identifier")),
+        // Class name is optional, but must NOT match keywords like extends/implements
+        r.optional(r.sequence((
+            r.not_followed_by(kw(r, "extends")),
+            r.not_followed_by(kw(r, "implements")),
+            r.not_followed_by(op(r, "{")),
+            r.parse("identifier"),
+        ))),
         r.optional(r.parse("type_parameters")),
         r.optional(r.sequence((kw(r, "extends"), r.parse("expression")))),
         r.optional(r.sequence((

@@ -3056,6 +3056,36 @@ fn test_debug_show_error() {
     let mut p_dec = Parser::new("const Foo = @mark class { };", &mut dict);
     let r_dec = p_dec.parse_program();
     eprintln!("'const Foo = @mark class {{ }};' FULL: {:?}", r_dec);
+
+    // Return class extends
+    let mut dict = StringDict::new();
+    let mut p_ret = Parser::new("return class extends Base { };", &mut dict);
+    let r_ret = p_ret.parse_program();
+    eprintln!("'return class extends Base {{ }};' FULL: {:?}", r_ret);
+
+    // Simple class extends expression
+    let mut dict = StringDict::new();
+    let mut p_ext = Parser::new("const C = class extends Base { };", &mut dict);
+    let r_ext = p_ext.parse_program();
+    eprintln!("'const C = class extends Base {{ }};' FULL: {:?}", r_ext);
+
+    // Even simpler - no extends
+    let mut dict = StringDict::new();
+    let mut p_simple = Parser::new("const C = class { };", &mut dict);
+    let r_simple = p_simple.parse_program();
+    eprintln!("'const C = class {{ }};' FULL: {:?}", r_simple);
+
+    // Test with named class and extends
+    let mut dict = StringDict::new();
+    let mut p_named = Parser::new("const C = class Foo extends Base { };", &mut dict);
+    let r_named = p_named.parse_program();
+    eprintln!("'const C = class Foo extends Base {{ }};' FULL: {:?}", r_named);
+
+    // Test class declaration with extends (should work)
+    let mut dict = StringDict::new();
+    let mut p_decl = Parser::new("class Foo extends Base { }", &mut dict);
+    let r_decl = p_decl.parse_program();
+    eprintln!("'class Foo extends Base {{ }}' (declaration): {:?}", r_decl);
 }
 
 // Regression: member access inside object literal value - BUG FOUND
@@ -3292,6 +3322,51 @@ fn test_class_expression_init() {
         assert!(decl.declarations[0].init.is_some(), "Class expression should be captured as init");
         if let Some(init) = &decl.declarations[0].init {
             assert!(matches!(init.as_ref(), Expression::Class(_)), "Init should be Class expression");
+        }
+    } else {
+        panic!("Expected variable declaration");
+    }
+}
+
+// Regression: anonymous class extends fails - "extends" consumed as class name
+#[test]
+fn test_class_expression_extends_anonymous() {
+    use tsrun::ast::{Expression, Statement};
+    let prog = parse("const C = class extends Base { };");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::VariableDeclaration(decl) = &prog.body[0] {
+        if let Some(init) = &decl.declarations[0].init {
+            if let Expression::Class(cls) = init.as_ref() {
+                assert!(cls.id.is_none(), "Anonymous class should have no name");
+                assert!(cls.super_class.is_some(), "Should have super_class");
+            } else {
+                panic!("Expected Class expression");
+            }
+        } else {
+            panic!("Expected init");
+        }
+    } else {
+        panic!("Expected variable declaration");
+    }
+}
+
+// Regression: named class extends should preserve both name and super_class
+#[test]
+fn test_class_expression_extends_named() {
+    use tsrun::ast::{Expression, Statement};
+    let prog = parse("const C = class Foo extends Base { };");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::VariableDeclaration(decl) = &prog.body[0] {
+        if let Some(init) = &decl.declarations[0].init {
+            if let Expression::Class(cls) = init.as_ref() {
+                assert!(cls.id.is_some(), "Named class should have name");
+                assert_eq!(cls.id.as_ref().map(|id| id.name.as_ref()), Some("Foo"));
+                assert!(cls.super_class.is_some(), "Should have super_class");
+            } else {
+                panic!("Expected Class expression");
+            }
+        } else {
+            panic!("Expected init");
         }
     } else {
         panic!("Expected variable declaration");
