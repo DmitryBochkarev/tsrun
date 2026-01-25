@@ -3386,3 +3386,22 @@ fn test_declare_class_method_signature() {
     let prog = parse("declare class Buffer { static from(str: string): Buffer; }");
     assert_eq!(prog.body.len(), 1);
 }
+
+// Regression: object method with return type annotation
+#[test]
+fn test_object_method_with_return_type() {
+    use tsrun::ast::{Expression, Statement};
+    // Method with return type annotation
+    let prog = parse("let calc = { add(a: number, b: number): number { return a + b; } };");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::VariableDeclaration(decl) = &prog.body[0] {
+        assert!(decl.declarations[0].init.is_some(), "Object literal should be captured");
+        if let Some(Expression::Object(_)) = decl.declarations[0].init.as_deref() {
+            // OK
+        } else {
+            panic!("Expected ObjectExpression");
+        }
+    } else {
+        panic!("Expected VariableDeclaration");
+    }
+}

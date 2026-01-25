@@ -1610,7 +1610,7 @@ fn parse_method_property(items: Vec<ParseResult>, span: Span) -> Option<ObjectPr
         }
     }
 
-    // Regular method: [async?, *?, key, "(", params?, ")", block]
+    // Regular method: [async?, *?, key, "(", params?, ")", type_ann?, block]
     // Always consume both optional slots, then the key
     let async_result = iter.next()?;
     let is_async = is_captured_keyword(&async_result, "async");
@@ -1624,6 +1624,7 @@ fn parse_method_property(items: Vec<ParseResult>, span: Span) -> Option<ObjectPr
     let _open = iter.next()?; // "("
     let params_result = iter.next()?;
     let _close = iter.next()?; // ")"
+    let _type_ann = iter.next()?; // optional return type annotation
     let block = iter.next()?;
 
     let params: Rc<[FunctionParam]> = parse_function_params(params_result).into();
@@ -4568,6 +4569,7 @@ fn rule_method_property(r: &RuleBuilder) -> Combinator {
         op(r, "("),
         r.optional(r.parse("parameter_list")),
         op(r, ")"),
+        r.optional(r.parse("type_annotation")), // Return type (TypeScript)
         r.parse("block_statement"),
     ))
 }
