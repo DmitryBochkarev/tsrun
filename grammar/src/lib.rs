@@ -3199,50 +3199,86 @@ fn rule_declare_module(r: &RuleBuilder) -> Combinator {
 // Import/Export
 
 fn rule_import_declaration(r: &RuleBuilder) -> Combinator {
-    r.sequence((
-        kw(r, "import"),
-        r.optional(kw(r, "type")),
-        r.parse("import_clause"),
-        kw(r, "from"),
-        r.parse("string_literal"),
-        r.parse("ws"),
-        r.parse("semicolon"),
-    ))
-    .ast(
-        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
-        // [import, type?, import_clause, from, string, ws, semicolon]
-        if let ParseResult::List(parts) = result {
-            let mut iter = parts.into_iter();
-            let _import = iter.next();
-            let type_part = iter.next();
-            let clause_part = iter.next().unwrap_or(ParseResult::None);
-            let _from = iter.next();
-            let string_part = iter.next().unwrap_or(ParseResult::None);
+    r.choice((
+        // Side-effect only import: import "module";
+        r.sequence((
+            kw(r, "import"),
+            r.parse("string_literal"),
+            r.parse("ws"),
+            r.parse("semicolon"),
+        ))
+        .ast(
+            "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+            // [import, string, ws, semicolon]
+            if let ParseResult::List(parts) = result {
+                let mut iter = parts.into_iter();
+                let _import = iter.next();
+                let string_part = iter.next().unwrap_or(ParseResult::None);
 
-            let type_only = !matches!(type_part, Some(ParseResult::None) | None);
+                let source = if let ParseResult::Text(value, sp) = string_part {
+                    let stripped = strip_string_quotes(value.as_ref());
+                    StringLiteral { value: stripped.into(), span: sp }
+                } else {
+                    return Err(ParseError::new(\"Expected import source string\".to_string(), 0, 0));
+                };
 
-            // Parse source string
-            let source = if let ParseResult::Text(value, sp) = string_part {
-                let stripped = strip_string_quotes(value.as_ref());
-                StringLiteral { value: stripped.into(), span: sp }
+                Ok(ParseResult::Stmt(Statement::Import(Box::new(ImportDeclaration {
+                    specifiers: vec![],
+                    source,
+                    type_only: false,
+                    span,
+                }))))
             } else {
-                return Err(ParseError::new(\"Expected import source string\".to_string(), 0, 0));
-            };
+                Err(ParseError::new(\"Expected import declaration parts\".to_string(), 0, 0))
+            }
+        }",
+        ),
+        // Regular import with specifiers: import x from "module";
+        r.sequence((
+            kw(r, "import"),
+            r.optional(kw(r, "type")),
+            r.parse("import_clause"),
+            kw(r, "from"),
+            r.parse("string_literal"),
+            r.parse("ws"),
+            r.parse("semicolon"),
+        ))
+        .ast(
+            "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+            // [import, type?, import_clause, from, string, ws, semicolon]
+            if let ParseResult::List(parts) = result {
+                let mut iter = parts.into_iter();
+                let _import = iter.next();
+                let type_part = iter.next();
+                let clause_part = iter.next().unwrap_or(ParseResult::None);
+                let _from = iter.next();
+                let string_part = iter.next().unwrap_or(ParseResult::None);
 
-            // Parse import clause into specifiers
-            let specifiers = parse_import_clause(clause_part, span.clone());
+                let type_only = !matches!(type_part, Some(ParseResult::None) | None);
 
-            Ok(ParseResult::Stmt(Statement::Import(Box::new(ImportDeclaration {
-                specifiers,
-                source,
-                type_only,
-                span,
-            }))))
-        } else {
-            Err(ParseError::new(\"Expected import declaration parts\".to_string(), 0, 0))
-        }
-    }",
-    )
+                // Parse source string
+                let source = if let ParseResult::Text(value, sp) = string_part {
+                    let stripped = strip_string_quotes(value.as_ref());
+                    StringLiteral { value: stripped.into(), span: sp }
+                } else {
+                    return Err(ParseError::new(\"Expected import source string\".to_string(), 0, 0));
+                };
+
+                // Parse import clause into specifiers
+                let specifiers = parse_import_clause(clause_part, span.clone());
+
+                Ok(ParseResult::Stmt(Statement::Import(Box::new(ImportDeclaration {
+                    specifiers,
+                    source,
+                    type_only,
+                    span,
+                }))))
+            } else {
+                Err(ParseError::new(\"Expected import declaration parts\".to_string(), 0, 0))
+            }
+        }",
+        ),
+    ))
 }
 
 fn rule_import_clause(r: &RuleBuilder) -> Combinator {
