@@ -178,6 +178,40 @@ fn test_as_expression() {
     assert_eq!(prog.body.len(), 1);
 }
 
+// Regression: generic call expression foo<T>(args) vs comparison a < b > c
+#[test]
+fn test_generic_call_expression() {
+    // Generic call should be parsed as call with type arguments
+    let prog = parse("identity<number>(42);");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::Expression(expr_stmt) = &prog.body[0] {
+        assert!(
+            matches!(expr_stmt.expression.as_ref(), Expression::Call(_)),
+            "Expected Call but got {:?}",
+            expr_stmt.expression
+        );
+    } else {
+        panic!("Expected ExpressionStatement");
+    }
+}
+
+#[test]
+fn test_comparison_not_generic_call() {
+    // a < b without () should NOT be parsed as generic call
+    let prog = parse("a < b;");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::Expression(expr_stmt) = &prog.body[0] {
+        // Should be a binary expression with < operator
+        assert!(
+            matches!(expr_stmt.expression.as_ref(), Expression::Binary(_)),
+            "Expected Binary comparison but got {:?}",
+            expr_stmt.expression
+        );
+    } else {
+        panic!("Expected ExpressionStatement");
+    }
+}
+
 #[test]
 fn test_binary_expression() {
     let prog = parse("(1 as number) + (2 as number) * (3 as number);");

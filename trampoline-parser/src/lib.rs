@@ -33,7 +33,9 @@ mod validation;
 pub use codegen::*;
 pub use ir::*;
 pub use parser_dsl::*;
-pub use prefix_factoring::{BacktrackingSeverity, BacktrackingWarning};
+pub use prefix_factoring::{
+    identify_memoization_candidates, BacktrackingSeverity, BacktrackingWarning,
+};
 pub use validation::{validate_grammar, ValidationError};
 
 /// Builder for AST configuration
@@ -203,6 +205,66 @@ impl Grammar {
     /// It detects Choice nodes with shared prefixes containing recursive rules
     /// and rewrites them to factor out the common prefix.
     pub fn build_optimized(self) -> CompiledGrammar {
+        self.build().optimize_backtracking()
+    }
+
+    /// Build with automatic memoization to avoid exponential backtracking.
+    ///
+    /// This analyzes the grammar to identify rules that would benefit from
+    /// memoization and automatically wraps them. Use this when you have
+    /// patterns that cause exponential backtracking (like TypeScript's
+    /// `identifier<types>(args)` vs comparison operators).
+    ///
+    /// The process:
+    /// 1. Analyze the grammar to find Choice nodes with shared recursive prefixes
+    /// 2. Identify rule references in those prefixes
+    /// 3. Wrap those rules with memoization
+    /// 4. Build the grammar
+    pub fn build_with_memoization(mut self) -> CompiledGrammar {
+        let candidates = prefix_factoring::identify_memoization_candidates(&self.rules);
+
+        if !candidates.is_empty() {
+            // Assign unique memo IDs to each candidate
+            let mut memo_id = 0;
+
+            // Wrap candidate rules with memoization
+            for rule in &mut self.rules {
+                if candidates.contains(&rule.name) {
+                    rule.combinator = Combinator::Memoize {
+                        id: memo_id,
+                        inner: Box::new(rule.combinator.clone()),
+                    };
+                    memo_id += 1;
+                }
+            }
+        }
+
+        self.build()
+    }
+
+    /// Build with both prefix factoring optimization and automatic memoization.
+    ///
+    /// This combines the benefits of both optimization strategies:
+    /// 1. Prefix factoring rewrites Choice nodes to factor out common prefixes
+    /// 2. Memoization caches results for rules that cause exponential backtracking
+    ///
+    /// Use this for the most comprehensive backtracking prevention.
+    pub fn build_optimized_with_memoization(mut self) -> CompiledGrammar {
+        let candidates = prefix_factoring::identify_memoization_candidates(&self.rules);
+
+        if !candidates.is_empty() {
+            let mut memo_id = 0;
+            for rule in &mut self.rules {
+                if candidates.contains(&rule.name) {
+                    rule.combinator = Combinator::Memoize {
+                        id: memo_id,
+                        inner: Box::new(rule.combinator.clone()),
+                    };
+                    memo_id += 1;
+                }
+            }
+        }
+
         self.build().optimize_backtracking()
     }
 }

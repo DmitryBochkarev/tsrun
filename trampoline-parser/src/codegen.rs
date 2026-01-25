@@ -420,6 +420,17 @@ impl<'a> CodeGenerator<'a> {
                     prefix
                 ));
             }
+            Combinator::Memoize { inner, .. } => {
+                // Memoization: cache results at (id, position) to avoid exponential backtracking
+                self.line(&format!("{}Start {{ result_base: usize }},", prefix));
+                self.line(&format!(
+                    "{}Complete {{ result_base: usize, start_pos: usize, inner_base: usize }},",
+                    prefix
+                ));
+                // Use "Memo" suffix to avoid conflicts with rule names like "primary_inner" -> "PrimaryInner"
+                let inner_prefix = format!("{}Memo", prefix);
+                self.emit_work_variants(&inner_prefix, inner);
+            }
         }
     }
 
@@ -449,6 +460,9 @@ impl<'a> CodeGenerator<'a> {
         self.line("work_stack: Vec<Work>,");
         self.line("result_stack: Vec<ParseResult>,");
         self.line("last_error: Option<ParseError>,");
+        // Memoization table: (memo_id, position) -> Option<(result, end_pos, end_line, end_column)>
+        // None in the Option means parsing failed at that position
+        self.line("memo: std::collections::HashMap<(usize, usize), Option<(ParseResult, usize, u32, u32)>>,");
         if has_string_dict {
             self.line(&format!("string_dict: &'a mut {},", string_dict_type));
         }
@@ -478,6 +492,7 @@ impl<'a> CodeGenerator<'a> {
         self.line("work_stack: Vec::new(),");
         self.line("result_stack: Vec::new(),");
         self.line("last_error: None,");
+        self.line("memo: std::collections::HashMap::new(),");
         if has_string_dict {
             self.line("string_dict,");
         }
@@ -3010,6 +3025,79 @@ impl<'a> CodeGenerator<'a> {
                 self.line("Err(e) => self.last_error = Some(e),");
                 self.indent -= 1;
                 self.line("}");
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("}");
+
+                // Recurse for inner handlers
+                self.emit_work_handlers(&inner_prefix, inner);
+            }
+            Combinator::Memoize { inner, id } => {
+                // Use "Memo" suffix to avoid conflicts with rule names like "primary_inner" -> "PrimaryInner"
+                let inner_prefix = format!("{}Memo", prefix);
+
+                // Start handler - check memo, if cached return it, else push Complete and inner Start
+                self.line(&format!(
+                    "Work::{}Start {{ result_base }} => {{",
+                    prefix
+                ));
+                self.indent += 1;
+                self.line(&format!("let memo_id = {};", id));
+                self.line("let start_pos = self.pos;");
+                self.line("let key = (memo_id, start_pos);");
+                self.line("if let Some(cached) = self.memo.get(&key).cloned() {");
+                self.indent += 1;
+                self.line("match cached {");
+                self.indent += 1;
+                self.line("Some((result, end_pos, end_line, end_column)) => {");
+                self.indent += 1;
+                self.line("self.result_stack.push(result);");
+                self.line("self.pos = end_pos;");
+                self.line("self.line = end_line;");
+                self.line("self.column = end_column;");
+                self.indent -= 1;
+                self.line("}");
+                self.line("None => {");
+                self.indent += 1;
+                self.line("self.last_error = Some(ParseError::new(\"memoized failure\".to_string(), self.line, self.column));");
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("let inner_base = self.result_stack.len();");
+                self.line(&format!(
+                    "self.work_stack.push(Work::{}Complete {{ result_base, start_pos, inner_base }});",
+                    prefix
+                ));
+                self.line(&format!(
+                    "self.work_stack.push(Work::{}Start {{ result_base: inner_base }});",
+                    inner_prefix
+                ));
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("}");
+
+                // Complete handler - store result in memo
+                self.line(&format!(
+                    "Work::{}Complete {{ result_base: _, start_pos, inner_base: _ }} => {{",
+                    prefix
+                ));
+                self.indent += 1;
+                self.line(&format!("let memo_id = {};", id));
+                self.line("let key = (memo_id, start_pos);");
+                self.line("if self.last_error.is_some() {");
+                self.indent += 1;
+                self.line("self.memo.insert(key, None);");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("let result = self.result_stack.last().cloned().unwrap_or(ParseResult::None);");
+                self.line("self.memo.insert(key, Some((result, self.pos, self.line, self.column)));");
                 self.indent -= 1;
                 self.line("}");
                 self.indent -= 1;

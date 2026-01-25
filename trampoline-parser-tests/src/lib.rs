@@ -153,6 +153,26 @@ pub mod backtracking_good_parser {
 }
 
 #[allow(dead_code, unused_variables, clippy::all)]
+pub mod generic_call_bad_parser {
+    include!(concat!(env!("OUT_DIR"), "/generic_call_bad_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod generic_call_good_parser {
+    include!(concat!(env!("OUT_DIR"), "/generic_call_good_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod generic_call_memoized_parser {
+    include!(concat!(env!("OUT_DIR"), "/generic_call_memoized_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod generic_call_auto_memoized_parser {
+    include!(concat!(env!("OUT_DIR"), "/generic_call_auto_memoized_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
 pub mod sparse_array_parser {
     include!(concat!(env!("OUT_DIR"), "/sparse_array_parser.rs"));
 }

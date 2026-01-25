@@ -5,7 +5,7 @@ use tsrun_grammar::typescript_grammar;
 
 fn main() {
     let grammar = typescript_grammar();
-    let compiled = grammar.build_optimized();
+    let compiled = grammar.build_optimized_with_memoization();
     let mut code = compiled.generate();
 
     // Append parse_program() wrapper method

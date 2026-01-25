@@ -118,7 +118,9 @@ pub fn is_nullable(
                 false
             }
         }
-        Combinator::Mapped { inner, .. } => is_nullable(inner, rule_map, visited),
+        Combinator::Mapped { inner, .. } | Combinator::Memoize { inner, .. } => {
+            is_nullable(inner, rule_map, visited)
+        }
     }
 }
 
@@ -177,7 +179,7 @@ fn check_nullable_loops(
                 check_nullable_loops(rule_name, operand, rule_map, errors);
             }
         }
-        Combinator::Mapped { inner, .. } => {
+        Combinator::Mapped { inner, .. } | Combinator::Memoize { inner, .. } => {
             check_nullable_loops(rule_name, inner, rule_map, errors);
         }
         // Leaf combinators - no nested loops
@@ -265,7 +267,8 @@ fn has_left_recursion(
         Combinator::OneOrMore(inner)
         | Combinator::Skip(inner)
         | Combinator::Capture(inner)
-        | Combinator::Mapped { inner, .. } => {
+        | Combinator::Mapped { inner, .. }
+        | Combinator::Memoize { inner, .. } => {
             has_left_recursion(target_rule, inner, rule_map, path, visited)
         }
         // Lookahead doesn't consume input but can't cause left recursion by itself

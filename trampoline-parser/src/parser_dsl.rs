@@ -112,6 +112,25 @@ impl RuleBuilder {
         Combinator::Capture(Box::new(inner))
     }
 
+    /// Memoize the result of parsing to avoid exponential backtracking.
+    ///
+    /// When a memoized combinator is tried at a position, the result is cached.
+    /// If the same combinator is tried again at the same position (due to
+    /// backtracking), the cached result is returned instead of re-parsing.
+    ///
+    /// Use this for rules that:
+    /// 1. Appear in multiple Choice alternatives
+    /// 2. Contain recursion
+    /// 3. Are frequently backtracked
+    ///
+    /// The `id` parameter must be unique across all memoization points.
+    pub fn memoize(&self, id: usize, inner: Combinator) -> Combinator {
+        Combinator::Memoize {
+            id,
+            inner: Box::new(inner),
+        }
+    }
+
     /// Sequence of combinators
     pub fn sequence<T: IntoCombinatorsVec>(&self, items: T) -> Combinator {
         Combinator::Sequence(items.into_combinators_vec())
@@ -647,5 +666,14 @@ mod tests {
             .ast("|(a, b)| Node { a, b }");
 
         assert!(matches!(mapped, Combinator::Mapped { .. }));
+    }
+
+    #[test]
+    fn test_memoize() {
+        let builder = RuleBuilder::new("test");
+
+        let memoized = builder.memoize(0, builder.parse("expensive_rule"));
+
+        assert!(matches!(memoized, Combinator::Memoize { id: 0, .. }));
     }
 }

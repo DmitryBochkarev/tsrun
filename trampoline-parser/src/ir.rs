@@ -60,6 +60,13 @@ pub enum Combinator {
     FollowedBy(Box<Combinator>),
     /// Capture the matched text as a string
     Capture(Box<Combinator>),
+    /// Memoize the result of parsing at each position to avoid exponential backtracking
+    Memoize {
+        /// Unique identifier for this memoization point
+        id: usize,
+        /// The inner combinator to memoize
+        inner: Box<Combinator>,
+    },
 }
 
 /// Allow string literals to be used as Combinator::Literal

@@ -110,7 +110,9 @@ pub fn typescript_grammar() -> Grammar {
         .rule("template_literal", rule_template_literal)
         .rule("template_literal_type", rule_template_literal_type)
         .rule("new_expression", rule_new_expression)
+        .rule("new_callee", rule_new_callee)
         .rule("yield_expression", rule_yield_expression)
+        .rule("generic_call_expression", rule_generic_call_expression)
         .rule("parenthesized", rule_parenthesized)
         .rule("argument_list", rule_argument_list)
         .rule("argument", rule_argument)
@@ -134,6 +136,8 @@ pub fn typescript_grammar() -> Grammar {
         .rule("keyword_type", rule_keyword_type)
         .rule("type_reference", rule_type_reference)
         .rule("type_arguments", rule_type_arguments)
+        .rule("simple_type_arguments", rule_simple_type_arguments)
+        .rule("simple_type_arg", rule_simple_type_arg)
         .rule("type_parameters", rule_type_parameters)
         .rule("type_parameter", rule_type_parameter)
         .rule("literal_type", rule_literal_type)
@@ -4409,8 +4413,11 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
 
 fn rule_primary(r: &RuleBuilder) -> Combinator {
     // Start with ws to handle whitespace after infix operators
-    r.sequence((r.parse("ws"), r.parse("primary_inner"))).ast(
-        "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    // Memoized to avoid exponential backtracking on deeply nested expressions
+    r.memoize(
+        0,
+        r.sequence((r.parse("ws"), r.parse("primary_inner"))).ast(
+            "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
         // Return the second element (primary_inner), skip the ws
         if let ParseResult::List(mut items) = result {
             Ok(items.pop().unwrap_or(ParseResult::None))
@@ -4418,6 +4425,7 @@ fn rule_primary(r: &RuleBuilder) -> Combinator {
             Ok(result)
         }
     }",
+        ),
     )
 }
 
@@ -4435,8 +4443,13 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
         r.parse("yield_expression"),
         // arrow_function before parenthesized - both start with ( but arrow needs => lookahead
         // Arrow function will fail if no => follows, then parenthesized will match
-        r.parse("arrow_function"),
+        // Memoized to avoid exponential backtracking on inputs with many ( characters
+        r.memoize(2, r.parse("arrow_function")),
         r.parse("parenthesized"),
+        // generic_call_expression before identifier - matches foo<T>(args)
+        // Will fail and backtrack if not followed by proper type args and call
+        // Memoized to avoid exponential backtracking on inputs with many < characters
+        r.memoize(1, r.parse("generic_call_expression")),
         // identifier last since it matches most things
         r.parse("identifier").ast(
             "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
@@ -4444,6 +4457,20 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
             Ok(ParseResult::Expr(Expression::Identifier(ident)))
         }",
         ),
+    ])
+}
+
+/// Callee for new expression - like primary_inner but without generic_call_expression
+/// so that `new Promise<void>(...)` parses type args separately
+fn rule_new_callee(r: &RuleBuilder) -> Combinator {
+    r.choice(vec![
+        r.parse("identifier").ast(
+            "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+            let ident = to_ident(result)?;
+            Ok(ParseResult::Expr(Expression::Identifier(ident)))
+        }",
+        ),
+        r.parse("parenthesized"),
     ])
 }
 
@@ -4894,7 +4921,7 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
 fn rule_new_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
         kw(r, "new"),
-        r.parse("primary"), // Use primary instead of expression to avoid consuming too much
+        r.parse("new_callee"), // Use new_callee instead of primary to avoid generic_call_expression eating type args
         r.optional(r.parse("type_arguments")), // Type arguments like <void> or <string, number>
         r.optional(r.sequence((op(r, "("), r.optional(r.parse("argument_list")), op(r, ")")))),
     ))
@@ -4946,6 +4973,65 @@ fn rule_new_expression(r: &RuleBuilder) -> Combinator {
             }))))
         } else {
             Err(ParseError::new(\"Expected new expression parts\".to_string(), 0, 0))
+        }
+    }",
+    )
+}
+
+/// Generic call expression: identifier<T, U>(args)
+/// This matches before identifier to handle foo<number>(42) as a call with type args
+/// rather than comparison (foo < number > (42))
+fn rule_generic_call_expression(r: &RuleBuilder) -> Combinator {
+    r.sequence((
+        r.parse("identifier"),
+        r.parse("simple_type_arguments"), // Use simple types to avoid exponential backtracking
+        op(r, "("),
+        r.optional(r.parse("argument_list")),
+        op(r, ")"),
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [identifier, type_args, (, args?, )]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let callee = iter.next().unwrap_or(ParseResult::None);
+            let type_args_result = iter.next().unwrap_or(ParseResult::None);
+            let _open_paren = iter.next();
+            let args_result = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next();
+
+            // Parse type arguments
+            let type_arguments = parse_type_arguments(type_args_result);
+
+            // Parse arguments
+            let arguments: Vec<Argument> = match args_result {
+                ParseResult::None => vec![],
+                ParseResult::List(items) => {
+                    items.into_iter().filter_map(|a| {
+                        parse_result_to_argument(a).ok()
+                    }).collect()
+                }
+                other => {
+                    if let Ok(arg) = parse_result_to_argument(other) {
+                        vec![arg]
+                    } else {
+                        vec![]
+                    }
+                }
+            };
+
+            // Convert callee identifier to expression
+            let callee_expr = to_expr(callee)?;
+
+            Ok(ParseResult::Expr(Expression::Call(Box::new(CallExpression {
+                callee: Rc::new(callee_expr),
+                arguments,
+                type_arguments,
+                optional: false,
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected generic call expression parts\".to_string(), 0, 0))
         }
     }",
     )
@@ -5330,6 +5416,30 @@ fn rule_type_arguments(r: &RuleBuilder) -> Combinator {
         op(r, "<"),
         r.separated_by(r.parse("type"), op(r, ",")),
         op(r, ">"),
+    ))
+}
+
+/// Simplified type arguments for generic call expressions to avoid exponential backtracking.
+/// Only allows simple types: identifiers, keyword types, and arrays of simple types.
+/// For more complex type arguments, the parser falls back to regular parsing.
+fn rule_simple_type_arguments(r: &RuleBuilder) -> Combinator {
+    r.sequence((
+        op(r, "<"),
+        r.separated_by(r.parse("simple_type_arg"), op(r, ",")),
+        op(r, ">"),
+    ))
+}
+
+/// A simple type argument: identifier, keyword type, or array of these
+fn rule_simple_type_arg(r: &RuleBuilder) -> Combinator {
+    r.choice((
+        // Keyword types: any, unknown, never, void, etc.
+        r.parse("keyword_type"),
+        // Identifier with optional [] suffix
+        r.sequence((
+            r.parse("identifier"),
+            r.zero_or_more(r.sequence((op(r, "["), op(r, "]")))),
+        )),
     ))
 }
 

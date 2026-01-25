@@ -327,7 +327,8 @@ fn contains_recursion(
         | Combinator::Capture(inner)
         | Combinator::NotFollowedBy(inner)
         | Combinator::FollowedBy(inner)
-        | Combinator::Mapped { inner, .. } => contains_recursion(inner, rule_map, visited),
+        | Combinator::Mapped { inner, .. }
+        | Combinator::Memoize { inner, .. } => contains_recursion(inner, rule_map, visited),
         Combinator::SeparatedBy {
             item, separator, ..
         } => {
@@ -647,6 +648,10 @@ pub fn optimize_combinator(comb: &Combinator, rule_map: &HashMap<&str, &Combinat
             inner: Box::new(optimize_combinator(inner, rule_map)),
             mapping: mapping.clone(),
         },
+        Combinator::Memoize { inner, id } => Combinator::Memoize {
+            inner: Box::new(optimize_combinator(inner, rule_map)),
+            id: *id,
+        },
         Combinator::SeparatedBy {
             item,
             separator,
@@ -743,7 +748,8 @@ fn analyze_combinator_for_backtracking(
         | Combinator::Capture(inner)
         | Combinator::NotFollowedBy(inner)
         | Combinator::FollowedBy(inner)
-        | Combinator::Mapped { inner, .. } => {
+        | Combinator::Mapped { inner, .. }
+        | Combinator::Memoize { inner, .. } => {
             analyze_combinator_for_backtracking(rule_name, inner, rule_map, warnings);
         }
         Combinator::SeparatedBy {
@@ -760,6 +766,203 @@ fn analyze_combinator_for_backtracking(
         // Leaf nodes - nothing to analyze
         Combinator::Rule(_)
         | Combinator::Literal(_)
+        | Combinator::Char(_)
+        | Combinator::CharClass(_)
+        | Combinator::CharRange(_, _)
+        | Combinator::AnyChar => {}
+    }
+}
+
+// ============================================================================
+// Memoization Candidate Detection
+// ============================================================================
+
+/// Identify rules that should be memoized to avoid exponential backtracking.
+///
+/// This function analyzes the grammar to find rules that:
+/// 1. Appear at the start of Choice alternatives that share a common prefix
+/// 2. Contain recursion (either directly or through rule references)
+/// 3. Would cause exponential backtracking without memoization
+///
+/// Returns a set of rule names that should be wrapped with `.memoize()`.
+pub fn identify_memoization_candidates(rules: &[RuleDef]) -> HashSet<String> {
+    let rule_map: HashMap<&str, &Combinator> = rules
+        .iter()
+        .map(|r| (r.name.as_str(), &r.combinator))
+        .collect();
+
+    let mut candidates = HashSet::new();
+
+    for rule in rules {
+        find_memoization_candidates_in_combinator(
+            &rule.combinator,
+            &rule_map,
+            &mut candidates,
+        );
+    }
+
+    candidates
+}
+
+/// Recursively search a combinator for memoization candidates.
+fn find_memoization_candidates_in_combinator(
+    comb: &Combinator,
+    rule_map: &HashMap<&str, &Combinator>,
+    candidates: &mut HashSet<String>,
+) {
+    match comb {
+        Combinator::Choice(alternatives) => {
+            // Check if this choice has exponential backtracking potential
+            let analysis = find_common_prefix(alternatives, rule_map);
+
+            if analysis.severity == BacktrackingSeverity::Exponential {
+                // Find the first rule reference in the common prefix
+                // That rule (and rules it calls) are memoization candidates
+                for prefix_elem in &analysis.prefix {
+                    collect_rule_references(prefix_elem, candidates);
+                }
+            }
+
+            // Also check for patterns where one alternative starts with another
+            // E.g., Choice([generic_call, identifier]) where generic_call starts with identifier
+            find_overlapping_rule_starts(alternatives, rule_map, candidates);
+
+            // Recurse into alternatives
+            for alt in alternatives {
+                find_memoization_candidates_in_combinator(alt, rule_map, candidates);
+            }
+        }
+        Combinator::Sequence(items) => {
+            for item in items {
+                find_memoization_candidates_in_combinator(item, rule_map, candidates);
+            }
+        }
+        Combinator::ZeroOrMore(inner)
+        | Combinator::OneOrMore(inner)
+        | Combinator::Optional(inner)
+        | Combinator::Skip(inner)
+        | Combinator::Capture(inner)
+        | Combinator::NotFollowedBy(inner)
+        | Combinator::FollowedBy(inner)
+        | Combinator::Mapped { inner, .. }
+        | Combinator::Memoize { inner, .. } => {
+            find_memoization_candidates_in_combinator(inner, rule_map, candidates);
+        }
+        Combinator::SeparatedBy {
+            item, separator, ..
+        } => {
+            find_memoization_candidates_in_combinator(item, rule_map, candidates);
+            find_memoization_candidates_in_combinator(separator, rule_map, candidates);
+        }
+        Combinator::Pratt(pratt) => {
+            if let Some(ref operand) = *pratt.operand {
+                find_memoization_candidates_in_combinator(operand, rule_map, candidates);
+            }
+        }
+        // Leaf nodes - nothing to recurse into
+        Combinator::Rule(_)
+        | Combinator::Literal(_)
+        | Combinator::Char(_)
+        | Combinator::CharClass(_)
+        | Combinator::CharRange(_, _)
+        | Combinator::AnyChar => {}
+    }
+}
+
+/// Find cases where one alternative starts with a rule that another alternative would match.
+///
+/// E.g., Choice([generic_call, identifier]) where generic_call starts with identifier.
+/// In this case, generic_call should be memoized because after matching identifier
+/// and failing to complete generic_call, we'll backtrack and try identifier again.
+fn find_overlapping_rule_starts(
+    alternatives: &[Combinator],
+    rule_map: &HashMap<&str, &Combinator>,
+    candidates: &mut HashSet<String>,
+) {
+    // Collect the first rule reference from each alternative
+    let mut first_rules: Vec<(usize, &str)> = Vec::new();
+    for (idx, alt) in alternatives.iter().enumerate() {
+        if let Some(first_rule) = get_first_rule(alt, rule_map) {
+            first_rules.push((idx, first_rule));
+        }
+    }
+
+    // For each alternative that's a rule reference, check if its expansion
+    // starts with any other alternative's first rule
+    for alt in alternatives {
+        if let Combinator::Rule(rule_name) = alt {
+            if let Some(rule_def) = rule_map.get(rule_name.as_str()) {
+                // Get what this rule starts with
+                if let Some(starts_with) = get_first_rule(rule_def, rule_map) {
+                    // Check if any other alternative is this same rule
+                    for (_, other_first) in &first_rules {
+                        if *other_first == starts_with && *other_first != rule_name.as_str() {
+                            // This rule starts with something another alternative matches
+                            // Mark this rule as a memoization candidate
+                            candidates.insert(rule_name.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Get the first rule reference at the start of a combinator.
+fn get_first_rule<'a>(comb: &'a Combinator, rule_map: &HashMap<&str, &'a Combinator>) -> Option<&'a str> {
+    match comb {
+        Combinator::Rule(name) => Some(name.as_str()),
+        Combinator::Sequence(items) if !items.is_empty() => get_first_rule(&items[0], rule_map),
+        Combinator::Optional(inner) => get_first_rule(inner, rule_map),
+        Combinator::Skip(inner) => get_first_rule(inner, rule_map),
+        Combinator::Capture(inner) => get_first_rule(inner, rule_map),
+        Combinator::Mapped { inner, .. } => get_first_rule(inner, rule_map),
+        Combinator::Memoize { inner, .. } => get_first_rule(inner, rule_map),
+        _ => None,
+    }
+}
+
+/// Collect all rule references from a combinator.
+fn collect_rule_references(comb: &Combinator, rules: &mut HashSet<String>) {
+    match comb {
+        Combinator::Rule(name) => {
+            rules.insert(name.clone());
+        }
+        Combinator::Sequence(items) | Combinator::Choice(items) => {
+            for item in items {
+                collect_rule_references(item, rules);
+            }
+        }
+        Combinator::ZeroOrMore(inner)
+        | Combinator::OneOrMore(inner)
+        | Combinator::Optional(inner)
+        | Combinator::Skip(inner)
+        | Combinator::Capture(inner)
+        | Combinator::NotFollowedBy(inner)
+        | Combinator::FollowedBy(inner)
+        | Combinator::Mapped { inner, .. }
+        | Combinator::Memoize { inner, .. } => {
+            collect_rule_references(inner, rules);
+        }
+        Combinator::SeparatedBy {
+            item, separator, ..
+        } => {
+            collect_rule_references(item, rules);
+            collect_rule_references(separator, rules);
+        }
+        Combinator::Pratt(pratt) => {
+            if let Some(ref operand) = *pratt.operand {
+                collect_rule_references(operand, rules);
+            }
+            for op in &pratt.prefix_ops {
+                collect_rule_references(&op.pattern, rules);
+            }
+            for op in &pratt.infix_ops {
+                collect_rule_references(&op.pattern, rules);
+            }
+        }
+        // Leaf nodes
+        Combinator::Literal(_)
         | Combinator::Char(_)
         | Combinator::CharClass(_)
         | Combinator::CharRange(_, _)
@@ -885,5 +1088,68 @@ mod tests {
         } else {
             panic!("Expected Sequence");
         }
+    }
+
+    #[test]
+    fn test_identify_memoization_candidates() {
+        // Create a grammar with potential exponential backtracking
+        // Similar to the generic_call vs identifier pattern
+        let rules = vec![
+            RuleDef {
+                name: "primary_inner".to_string(),
+                combinator: Combinator::Choice(vec![
+                    Combinator::Rule("generic_call".to_string()),
+                    Combinator::Rule("identifier".to_string()),
+                ]),
+            },
+            RuleDef {
+                name: "generic_call".to_string(),
+                combinator: Combinator::Sequence(vec![
+                    Combinator::Rule("identifier".to_string()),
+                    Combinator::Rule("type_arguments".to_string()),
+                    Combinator::Literal("(".to_string()),
+                    Combinator::Literal(")".to_string()),
+                ]),
+            },
+            RuleDef {
+                name: "type_arguments".to_string(),
+                combinator: Combinator::Sequence(vec![
+                    Combinator::Literal("<".to_string()),
+                    Combinator::Rule("type".to_string()),
+                    Combinator::Literal(">".to_string()),
+                ]),
+            },
+            RuleDef {
+                name: "type".to_string(),
+                combinator: Combinator::Choice(vec![
+                    Combinator::Rule("type_reference".to_string()),
+                    Combinator::Rule("identifier".to_string()),
+                ]),
+            },
+            RuleDef {
+                name: "type_reference".to_string(),
+                combinator: Combinator::Sequence(vec![
+                    Combinator::Rule("identifier".to_string()),
+                    Combinator::Optional(Box::new(Combinator::Rule("type_arguments".to_string()))),
+                ]),
+            },
+            RuleDef {
+                name: "identifier".to_string(),
+                combinator: Combinator::Capture(Box::new(Combinator::OneOrMore(Box::new(
+                    Combinator::CharClass(crate::ir::CharClass::Alpha),
+                )))),
+            },
+        ];
+
+        let candidates = identify_memoization_candidates(&rules);
+
+        // The choice in primary_inner has generic_call and identifier as alternatives.
+        // generic_call contains identifier as its first element, so there's a shared prefix.
+        // generic_call should be identified as a memoization candidate.
+        assert!(
+            candidates.contains("generic_call"),
+            "Should identify generic_call as memoization candidate, got: {:?}",
+            candidates
+        );
     }
 }

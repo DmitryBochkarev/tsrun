@@ -117,6 +117,26 @@ fn main() {
     );
     write_parser(
         out_path,
+        "generic_call_bad_parser",
+        &grammars::generic_call_bad().generate(),
+    );
+    write_parser(
+        out_path,
+        "generic_call_good_parser",
+        &grammars::generic_call_good().generate(),
+    );
+    write_parser(
+        out_path,
+        "generic_call_memoized_parser",
+        &grammars::generic_call_memoized().generate(),
+    );
+    write_parser(
+        out_path,
+        "generic_call_auto_memoized_parser",
+        &grammars::generic_call_auto_memoized().generate(),
+    );
+    write_parser(
+        out_path,
         "sparse_array_parser",
         &grammars::sparse_array().generate(),
     );
