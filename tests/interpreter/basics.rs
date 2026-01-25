@@ -76,6 +76,11 @@ fn test_arithmetic() {
 
 #[test]
 fn test_precedence() {
+    // Simpler tests first
+    assert_eq!(eval("2 * 3"), JsValue::Number(6.0));
+    assert_eq!(eval("1 + 2"), JsValue::Number(3.0));
+    assert_eq!(eval("1 + 2 * 3"), JsValue::Number(7.0));
+    // Original tests with type assertions
     assert_eq!(
         eval("(1 as number) + (2 as number) * (3 as number)"),
         JsValue::Number(7.0)

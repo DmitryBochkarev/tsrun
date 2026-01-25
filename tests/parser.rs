@@ -108,6 +108,31 @@ fn test_parenthesized_expression() {
     assert_eq!(prog.body.len(), 1);
 }
 
+// Test operator precedence: * should bind tighter than +
+#[test]
+fn test_operator_precedence_ast() {
+    use tsrun::ast::{BinaryExpression, BinaryOp, Expression, Statement};
+    let prog = parse("1 + 2 * 3;");
+    assert_eq!(prog.body.len(), 1);
+    // Should parse as 1 + (2 * 3), not (1 + 2) * 3
+    if let Statement::Expression(expr_stmt) = &prog.body[0] {
+        if let Expression::Binary(bin) = expr_stmt.expression.as_ref() {
+            println!("Binary: {:?} {:?}", bin.operator, bin);
+            assert_eq!(bin.operator, BinaryOp::Add, "outer should be +");
+            // Right side should be 2 * 3
+            if let Expression::Binary(right_bin) = bin.right.as_ref() {
+                assert_eq!(right_bin.operator, BinaryOp::Mul, "right should be *");
+            } else {
+                panic!("Expected right side to be Binary(Mul), got {:?}", bin.right);
+            }
+        } else {
+            panic!("Expected Binary, got {:?}", expr_stmt.expression);
+        }
+    } else {
+        panic!("Expected ExpressionStatement, got {:?}", prog.body[0]);
+    }
+}
+
 #[test]
 fn test_generator_function_declaration() {
     // Normal function

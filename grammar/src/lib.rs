@@ -4443,13 +4443,13 @@ fn rule_new_expression(r: &RuleBuilder) -> Combinator {
                     match args_list {
                         ParseResult::List(items) => {
                             items.into_iter().filter_map(|a| {
-                                to_expr(a).ok().map(Argument::Expression)
+                                parse_result_to_argument(a).ok()
                             }).collect()
                         }
                         ParseResult::None => vec![],
                         other => {
-                            if let Ok(e) = to_expr(other) {
-                                vec![Argument::Expression(e)]
+                            if let Ok(arg) = parse_result_to_argument(other) {
+                                vec![arg]
                             } else {
                                 vec![]
                             }
@@ -4690,9 +4690,27 @@ fn rule_array_pattern(r: &RuleBuilder) -> Combinator {
                         match item {
                             ParseResult::Pat(p) => Some(p),
                             ParseResult::List(elem_parts) => {
-                                // [pattern, default?] - for now ignore default, just get pattern
+                                // [pattern, default?]
                                 let mut elem_iter = elem_parts.into_iter();
-                                elem_iter.next().and_then(|p| to_pattern(p).ok())
+                                let pattern_result = elem_iter.next();
+                                let default_result = elem_iter.next();
+
+                                let mut pattern = pattern_result.and_then(|p| to_pattern(p).ok())?;
+
+                                // If there's a default value, wrap in Pattern::Assignment
+                                if let Some(ParseResult::List(default_parts)) = default_result {
+                                    // default_parts is [=, expression]
+                                    if let Some(expr_result) = default_parts.into_iter().nth(1) {
+                                        if let Ok(expr) = to_expr(expr_result) {
+                                            pattern = Pattern::Assignment(AssignmentPattern {
+                                                left: Box::new(pattern),
+                                                right: Rc::new(expr),
+                                                span: span.clone(),
+                                            });
+                                        }
+                                    }
+                                }
+                                Some(pattern)
                             }
                             ParseResult::None => None,
                             _ => None,

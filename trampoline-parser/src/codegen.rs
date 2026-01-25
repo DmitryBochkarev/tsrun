@@ -2136,17 +2136,18 @@ impl<'a> CodeGenerator<'a> {
                             if !complex_ops.is_empty() {
                                 self.line("} else {");
                                 self.indent += 1;
+                                // Use the MAXIMUM precedence among all complex ops for the gate condition
+                                let max_prec = complex_ops.iter().map(|(_, op, _)| op.precedence).max().unwrap_or(0);
                                 self.line("// Try first complex infix operator (others will be chained if this fails)");
                                 let first_op = &complex_ops[0];
-                                let prec = first_op.1.precedence;
                                 let next_prec = if first_op.1.assoc == crate::Assoc::Right {
-                                    prec
+                                    first_op.1.precedence
                                 } else {
-                                    prec + 1
+                                    first_op.1.precedence + 1
                                 };
                                 self.line(&format!(
                                     "if {} >= min_prec && self.pos == infix_checkpoint {{",
-                                    prec
+                                    max_prec
                                 ));
                                 self.indent += 1;
                                 self.line(&format!(
@@ -2161,17 +2162,19 @@ impl<'a> CodeGenerator<'a> {
                         }
                     } else if !complex_ops.is_empty() {
                         // No ternary, just complex infix ops
+                        // Use the MAXIMUM precedence among all complex ops for the gate condition
+                        // This ensures we try the chain if ANY complex op could potentially match
+                        let max_prec = complex_ops.iter().map(|(_, op, _)| op.precedence).max().unwrap_or(0);
                         self.line("// Try first complex infix operator (others will be chained if this fails)");
                         let first_op = &complex_ops[0];
-                        let prec = first_op.1.precedence;
                         let next_prec = if first_op.1.assoc == crate::Assoc::Right {
-                            prec
+                            first_op.1.precedence
                         } else {
-                            prec + 1
+                            first_op.1.precedence + 1
                         };
                         self.line(&format!(
                             "if {} >= min_prec && self.pos == infix_checkpoint {{",
-                            prec
+                            max_prec
                         ));
                         self.indent += 1;
                         self.line(&format!(
@@ -2410,11 +2413,25 @@ impl<'a> CodeGenerator<'a> {
                     self.line("match op_idx {");
                     self.indent += 1;
 
-                    for (complex_idx, (op_idx, _infix_op, pattern)) in
+                    // Pre-compute max precedence for remaining operators at each position
+                    // This is used to decide whether to continue the chain
+                    let max_prec_from: Vec<u8> = (0..complex_ops_indexed.len())
+                        .map(|i| {
+                            complex_ops_indexed[i..]
+                                .iter()
+                                .map(|(_, op, _)| op.precedence)
+                                .max()
+                                .unwrap_or(0)
+                        })
+                        .collect();
+
+                    for (complex_idx, (op_idx, infix_op, pattern)) in
                         complex_ops_indexed.iter().enumerate()
                     {
                         self.line(&format!("{} => {{", op_idx));
                         self.indent += 1;
+
+                        let op_precedence = infix_op.precedence;
 
                         // Generate condition based on not_followed_by patterns
                         if pattern.not_followed_by.is_empty() {
@@ -2449,6 +2466,15 @@ impl<'a> CodeGenerator<'a> {
                             self.indent += 1;
                         }
 
+                        // Check if this operator's precedence is high enough
+                        // This is critical: we matched the literal, but we must check if this
+                        // specific operator's precedence allows it to bind at this level
+                        self.line(&format!(
+                            "if {} >= min_prec {{",
+                            op_precedence
+                        ));
+                        self.indent += 1;
+
                         // Success - proceed with parsing right operand
                         self.line(&format!(
                             "self.work_stack.push(Work::{}AfterInfix {{ result_base, min_prec, op_idx, start_pos, start_line, start_column }});",
@@ -2459,13 +2485,24 @@ impl<'a> CodeGenerator<'a> {
                             prefix
                         ));
 
+                        self.indent -= 1;
+                        self.line("} else {");
+                        self.indent += 1;
+                        self.line("// Operator matched but precedence too low - unconsume operator and return");
+                        // Unconsume the operator literal
+                        let literal_len = pattern.literal.len();
+                        self.line(&format!("self.pos -= {};", literal_len));
+                        self.line(&format!("self.column -= {};", literal_len));
+                        self.indent -= 1;
+                        self.line("}");
+
                         if pattern.is_keyword {
                             self.indent -= 1;
                             self.line("} else {");
                             self.indent += 1;
                             self.line("// Keyword boundary failed - restore and try next");
                             self.line("self.pos = checkpoint;");
-                            // Try next complex operator if any
+                            // Try next complex operator if any - use max prec of remaining ops
                             if complex_idx + 1 < complex_ops_indexed.len() {
                                 let (next_op_idx, next_infix_op, _) =
                                     &complex_ops_indexed[complex_idx + 1];
@@ -2474,9 +2511,11 @@ impl<'a> CodeGenerator<'a> {
                                 } else {
                                     next_infix_op.precedence + 1
                                 };
+                                // Use max precedence of ALL remaining operators to decide whether to continue
+                                let remaining_max_prec = max_prec_from[complex_idx + 1];
                                 self.line(&format!(
                                     "if {} >= min_prec {{ self.work_stack.push(Work::{}TryInfixWithRule {{ result_base, min_prec, op_idx: {}, next_prec: {}, checkpoint, start_pos, start_line, start_column }}); }}",
-                                    next_infix_op.precedence, prefix, next_op_idx, next_prec_val
+                                    remaining_max_prec, prefix, next_op_idx, next_prec_val
                                 ));
                             }
                             self.indent -= 1;
@@ -2490,7 +2529,7 @@ impl<'a> CodeGenerator<'a> {
                             "// Literal didn't match - restore checkpoint and try next complex op",
                         );
                         self.line("self.pos = checkpoint;");
-                        // Try next complex operator if any
+                        // Try next complex operator if any - use max prec of remaining ops
                         if complex_idx + 1 < complex_ops_indexed.len() {
                             let (next_op_idx, next_infix_op, _) =
                                 &complex_ops_indexed[complex_idx + 1];
@@ -2499,9 +2538,11 @@ impl<'a> CodeGenerator<'a> {
                             } else {
                                 next_infix_op.precedence + 1
                             };
+                            // Use max precedence of ALL remaining operators to decide whether to continue
+                            let remaining_max_prec = max_prec_from[complex_idx + 1];
                             self.line(&format!(
                                 "if {} >= min_prec {{ self.work_stack.push(Work::{}TryInfixWithRule {{ result_base, min_prec, op_idx: {}, next_prec: {}, checkpoint, start_pos, start_line, start_column }}); }}",
-                                next_infix_op.precedence, prefix, next_op_idx, next_prec_val
+                                remaining_max_prec, prefix, next_op_idx, next_prec_val
                             ));
                         }
                         self.indent -= 1;
