@@ -3009,6 +3009,24 @@ fn test_debug_show_error() {
     let r36 = p36.parse_program();
     eprintln!("'const x = 5' FULL: {:?}", r36);
 
+    // Optional call expression
+    let mut dict = StringDict::new();
+    let mut p_opt = Parser::new("a?.b()", &mut dict);
+    let r_opt = p_opt.parse_program();
+    eprintln!("'a?.b()' FULL: {:?}", r_opt);
+
+    // Chained optional call expression
+    let mut dict = StringDict::new();
+    let mut p_opt2 = Parser::new("a?.b.c()", &mut dict);
+    let r_opt2 = p_opt2.parse_program();
+    eprintln!("'a?.b.c()' FULL: {:?}", r_opt2);
+
+    // Chained optional with member after call
+    let mut dict = StringDict::new();
+    let mut p_opt3 = Parser::new("a?.b.c().d", &mut dict);
+    let r_opt3 = p_opt3.parse_program();
+    eprintln!("'a?.b.c().d' FULL: {:?}", r_opt3);
+
     // Call expression without member
     let mut dict = StringDict::new();
     let mut p37 = Parser::new("{ f() }", &mut dict);
