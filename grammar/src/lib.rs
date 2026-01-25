@@ -863,11 +863,17 @@ fn create_array_expr(elements_result: ParseResult, span: Span) -> Result<ParseRe
 
                     // Process rest elements
                     if let Some(ParseResult::List(rest_items)) = rest {
-                        for item in rest_items {
+                        let len = rest_items.len();
+                        for (i, item) in rest_items.into_iter().enumerate() {
                             // item = [comma, elem?]
                             if let ParseResult::List(pair) = item {
                                 let elem = pair.into_iter().nth(1).and_then(parse_result_to_array_element);
-                                elements.push(elem);
+                                // Skip trailing comma: last item with None element
+                                let is_last = i == len - 1;
+                                let is_trailing_comma = is_last && elem.is_none();
+                                if !is_trailing_comma {
+                                    elements.push(elem);
+                                }
                             }
                         }
                     }
