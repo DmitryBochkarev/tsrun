@@ -72,10 +72,14 @@ fn get_array_like_element(obj: &Gc<JsObject>, index: u32) -> JsValue {
             .cloned()
             .unwrap_or(JsValue::Undefined);
     }
-    // Otherwise, get by property index
-    borrowed
-        .get_property(&PropertyKey::Index(index))
-        .unwrap_or(JsValue::Undefined)
+    // For array-like objects, try both index and string key
+    // Object literals store numeric keys as strings (e.g., { 0: 'a' } uses "0" not Index(0))
+    if let Some(val) = borrowed.get_property(&PropertyKey::Index(index)) {
+        return val;
+    }
+    // Fall back to string key (e.g., "0", "1", "2")
+    let string_key = PropertyKey::String(JsString::from(index.to_string()));
+    borrowed.get_property(&string_key).unwrap_or(JsValue::Undefined)
 }
 
 /// Check if an array-like object has an element at the given index.
@@ -86,8 +90,14 @@ fn has_array_like_element(obj: &Gc<JsObject>, index: u32) -> bool {
     if let ExoticObject::Array { ref elements } = borrowed.exotic {
         return index < elements.len() as u32;
     }
-    // Otherwise, check property existence
-    borrowed.has_own_property(&PropertyKey::Index(index))
+    // For array-like objects, check both index and string key
+    // Object literals store numeric keys as strings (e.g., { 0: 'a' } uses "0" not Index(0))
+    if borrowed.has_own_property(&PropertyKey::Index(index)) {
+        return true;
+    }
+    // Fall back to string key (e.g., "0", "1", "2")
+    let string_key = PropertyKey::String(JsString::from(index.to_string()));
+    borrowed.has_own_property(&string_key)
 }
 
 /// Initialize Array.prototype with all array methods.

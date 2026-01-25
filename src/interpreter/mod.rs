@@ -970,11 +970,14 @@ impl Interpreter {
         for (export_name, module_export) in exports {
             match module_export {
                 ModuleExport::Direct { name, value } => {
+                    // Intern the name to ensure pointer-based VarKey lookup works correctly
+                    let interned_name = self.intern(name.as_str());
+
                     // Check if there's a binding in the module environment
                     let has_binding = {
                         let env_ref = module_env.borrow();
                         if let Some(env_data) = env_ref.as_environment() {
-                            let var_key = VarKey(name.cheap_clone());
+                            let var_key = VarKey(interned_name.cheap_clone());
                             env_data.bindings.contains_key(&var_key)
                         } else {
                             false
@@ -990,7 +993,7 @@ impl Interpreter {
                             getter_ref.exotic =
                                 ExoticObject::Function(JsFunction::ModuleExportGetter {
                                     module_env: module_env.cheap_clone(),
-                                    binding_name: name,
+                                    binding_name: interned_name,
                                 });
                         }
 
@@ -1741,11 +1744,14 @@ impl Interpreter {
         for (export_name, module_export) in exports {
             match module_export {
                 ModuleExport::Direct { name, value } => {
+                    // Intern the name to ensure pointer-based VarKey lookup works correctly
+                    let interned_name = self.intern(name.as_str());
+
                     // Check if there's a binding in the module environment
                     let has_binding = {
                         let env_ref = module_env.borrow();
                         if let Some(env_data) = env_ref.as_environment() {
-                            let var_key = VarKey(name.cheap_clone());
+                            let var_key = VarKey(interned_name.cheap_clone());
                             env_data.bindings.contains_key(&var_key)
                         } else {
                             false
@@ -1761,7 +1767,7 @@ impl Interpreter {
                             getter_ref.exotic =
                                 ExoticObject::Function(JsFunction::ModuleExportGetter {
                                     module_env: module_env.cheap_clone(),
-                                    binding_name: name,
+                                    binding_name: interned_name,
                                 });
                         }
 
@@ -2005,10 +2011,13 @@ impl Interpreter {
 
     /// Define a variable in the current environment
     pub fn env_define(&mut self, name: JsString, value: JsValue, mutable: bool) {
+        // Intern the name to ensure pointer-based VarKey lookup works correctly.
+        // The bytecode VM interns strings before lookup, so we must intern here too.
+        let interned_name = self.intern(name.as_str());
         let mut env_ref = self.env.borrow_mut();
         if let Some(data) = env_ref.as_environment_mut() {
             data.bindings.insert(
-                VarKey(name),
+                VarKey(interned_name),
                 Binding {
                     value,
                     mutable,
@@ -2026,10 +2035,13 @@ impl Interpreter {
         module_obj: Gc<JsObject>,
         property_key: PropertyKey,
     ) {
+        // Intern the name to ensure pointer-based VarKey lookup works correctly.
+        // The bytecode VM interns strings before lookup, so we must intern here too.
+        let interned_name = self.intern(name.as_str());
         let mut env_ref = self.env.borrow_mut();
         if let Some(data) = env_ref.as_environment_mut() {
             data.bindings.insert(
-                VarKey(name),
+                VarKey(interned_name),
                 Binding {
                     value: JsValue::Undefined, // Not used for import bindings
                     mutable: false,            // Imports are always read-only
@@ -3494,11 +3506,14 @@ impl Interpreter {
         for (export_name, module_export) in exports {
             match module_export {
                 ModuleExport::Direct { name, value } => {
+                    // Intern the name to ensure pointer-based VarKey lookup works correctly
+                    let interned_name = self.intern(name.as_str());
+
                     // Check if there's a binding in the module environment
                     let has_binding = {
                         let env_ref = module_env.borrow();
                         if let Some(env_data) = env_ref.as_environment() {
-                            let var_key = VarKey(name.cheap_clone());
+                            let var_key = VarKey(interned_name.cheap_clone());
                             env_data.bindings.contains_key(&var_key)
                         } else {
                             false
@@ -3514,7 +3529,7 @@ impl Interpreter {
                             getter_ref.exotic =
                                 ExoticObject::Function(JsFunction::ModuleExportGetter {
                                     module_env: module_env.cheap_clone(),
-                                    binding_name: name,
+                                    binding_name: interned_name,
                                 });
                         }
 

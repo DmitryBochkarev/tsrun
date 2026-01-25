@@ -3008,7 +3008,8 @@ fn char_class_check(class: CharClass) -> &'static str {
         CharClass::HexDigit => "|c: char| c.is_ascii_hexdigit()",
         CharClass::Alpha => "|c: char| c.is_ascii_alphabetic()",
         CharClass::AlphaNumeric => "|c: char| c.is_ascii_alphanumeric()",
-        CharClass::Whitespace => "|c: char| c.is_ascii_whitespace()",
+        // ECMAScript whitespace: space, tab, vertical tab, form feed, NBSP, BOM, line terminators, Zs category
+        CharClass::Whitespace => "|c: char| matches!(c, ' ' | '\\t' | '\\x0B' | '\\x0C' | '\\r' | '\\n' | '\\u{00A0}' | '\\u{FEFF}' | '\\u{2028}' | '\\u{2029}') || c.is_whitespace()",
         CharClass::IdentStart => "|c: char| c.is_ascii_alphabetic() || c == '_' || c == '$'",
         CharClass::IdentCont => "|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$'",
     }

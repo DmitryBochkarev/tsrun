@@ -4,6 +4,22 @@ use super::eval;
 use tsrun::JsValue;
 use tsrun::value::JsString;
 
+// Regression: quoted string keys in object literals must work the same as identifier keys
+#[test]
+fn test_object_literal_quoted_keys() {
+    // Quoted keys like {"a": 1} should work the same as identifier keys {a: 1}
+    assert_eq!(
+        eval(r#"var obj = {"a": 1}; obj.a"#),
+        JsValue::Number(1.0),
+        "Quoted string key should be accessible via dot notation"
+    );
+    assert_eq!(
+        eval(r#"var obj = {"a": 1}; obj["a"]"#),
+        JsValue::Number(1.0),
+        "Quoted string key should be accessible via bracket notation"
+    );
+}
+
 #[test]
 fn test_object_string_numeric_keys() {
     // String keys that look like numbers should work correctly

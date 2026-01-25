@@ -3,8 +3,8 @@
 //! These tests verify that the parser correctly parses TypeScript/JavaScript source into AST.
 
 use tsrun::ast::{
-    Argument, ClassMember, Expression, ForInit, MemberProperty, MethodKind, ObjectPropertyKey,
-    Program, Statement,
+    Argument, ClassMember, Expression, ForInit, ImportSpecifier, MemberProperty, MethodKind,
+    ObjectPropertyKey, Program, Statement,
 };
 use tsrun::parser::Parser;
 use tsrun::string_dict::StringDict;
@@ -2800,5 +2800,106 @@ fn test_multiple_type_declarations() {
 fn test_function_destructuring_default() {
     let prog = parse("function f({ x = 1 }: { x?: number } = {}) { return x; }");
     assert_eq!(prog.body.len(), 1);
+}
+
+// ========================================
+// Import declaration tests
+// ========================================
+
+#[test]
+fn test_parse_import_named_specifiers() {
+    let prog = parse(r#"import { add, sub as subtract } from "./math";"#);
+    assert_eq!(prog.body.len(), 1);
+
+    let Statement::Import(import) = &prog.body[0] else {
+        panic!("Expected Import statement");
+    };
+
+    // Verify specifiers are populated
+    assert_eq!(
+        import.specifiers.len(),
+        2,
+        "Expected 2 import specifiers, got {:?}",
+        import.specifiers
+    );
+
+    // Check first specifier
+    match &import.specifiers[0] {
+        ImportSpecifier::Named {
+            local, imported, ..
+        } => {
+            assert_eq!(local.name.as_str(), "add");
+            assert_eq!(imported.name.as_str(), "add");
+        }
+        _ => panic!("Expected Named specifier"),
+    }
+
+    // Check second specifier with rename
+    match &import.specifiers[1] {
+        ImportSpecifier::Named {
+            local, imported, ..
+        } => {
+            assert_eq!(local.name.as_str(), "subtract");
+            assert_eq!(imported.name.as_str(), "sub");
+        }
+        _ => panic!("Expected Named specifier"),
+    }
+}
+
+#[test]
+fn test_parse_import_default() {
+    let prog = parse(r#"import Config from "./config";"#);
+    let Statement::Import(import) = &prog.body[0] else {
+        panic!("Expected Import statement");
+    };
+
+    assert_eq!(
+        import.specifiers.len(),
+        1,
+        "Expected 1 import specifier, got {:?}",
+        import.specifiers
+    );
+    assert!(
+        matches!(&import.specifiers[0], ImportSpecifier::Default { .. }),
+        "Expected Default specifier, got {:?}",
+        import.specifiers[0]
+    );
+}
+
+#[test]
+fn test_parse_import_namespace() {
+    let prog = parse(r#"import * as utils from "./utils";"#);
+    let Statement::Import(import) = &prog.body[0] else {
+        panic!("Expected Import statement");
+    };
+
+    assert_eq!(
+        import.specifiers.len(),
+        1,
+        "Expected 1 import specifier, got {:?}",
+        import.specifiers
+    );
+    assert!(
+        matches!(&import.specifiers[0], ImportSpecifier::Namespace { .. }),
+        "Expected Namespace specifier, got {:?}",
+        import.specifiers[0]
+    );
+}
+
+#[test]
+fn test_parse_side_effect_import() {
+    let prog = parse(r#"import "./polyfill";"#);
+    let Statement::Import(import) = &prog.body[0] else {
+        panic!("Expected Import statement");
+    };
+
+    // Side-effect imports have NO specifiers
+    assert_eq!(
+        import.specifiers.len(),
+        0,
+        "Side-effect import should have 0 specifiers, got {:?}",
+        import.specifiers
+    );
+    assert_eq!(import.source.value.as_ref(), "./polyfill");
 }
 

@@ -184,13 +184,24 @@ const HELPER_FUNCTIONS: &str = r#"
 /// Parse a number literal string to f64
 fn parse_number(text: &JsString) -> f64 {
     let s = text.as_ref();
+    // Strip BigInt suffix if present (BigInt is treated as Number for now)
+    let s = s.strip_suffix('n').unwrap_or(s);
     // Handle hex, binary, octal
     if s.starts_with("0x") || s.starts_with("0X") {
-        i64::from_str_radix(&s[2..], 16).map(|n| n as f64).unwrap_or(f64::NAN)
+        // Strip 'n' suffix from the hex part too if present after prefix removal
+        let hex_part = &s[2..];
+        let hex_part = hex_part.strip_suffix('n').unwrap_or(hex_part);
+        // Remove underscores from hex digits
+        let cleaned: String = hex_part.chars().filter(|c| *c != '_').collect();
+        i64::from_str_radix(&cleaned, 16).map(|n| n as f64).unwrap_or(f64::NAN)
     } else if s.starts_with("0b") || s.starts_with("0B") {
-        i64::from_str_radix(&s[2..], 2).map(|n| n as f64).unwrap_or(f64::NAN)
+        let bin_part = &s[2..];
+        let cleaned: String = bin_part.chars().filter(|c| *c != '_').collect();
+        i64::from_str_radix(&cleaned, 2).map(|n| n as f64).unwrap_or(f64::NAN)
     } else if s.starts_with("0o") || s.starts_with("0O") {
-        i64::from_str_radix(&s[2..], 8).map(|n| n as f64).unwrap_or(f64::NAN)
+        let oct_part = &s[2..];
+        let cleaned: String = oct_part.chars().filter(|c| *c != '_').collect();
+        i64::from_str_radix(&cleaned, 8).map(|n| n as f64).unwrap_or(f64::NAN)
     } else {
         // Remove underscores and parse
         let cleaned: String = s.chars().filter(|c| *c != '_').collect();
@@ -994,23 +1005,23 @@ fn parse_import_clause_parts(parts: Vec<ParseResult>, span: Span) -> Vec<ImportS
     let mut specifiers = vec![];
     let len = parts.len();
 
-    // Check for namespace import: [*, as, Ident]
-    // The * is captured as None, then 'as' is None, then Ident
+    // Check for namespace import: [op("*"), kw("as"), Ident]
+    // op and kw produce List results, identifier produces Ident
+    // The key distinguishing feature is that the third element is an Ident (the alias name)
     if len == 3 {
         let mut iter = parts.clone().into_iter();
-        let first = iter.next();
-        let _second = iter.next();
+        let _first = iter.next(); // op("*") -> List
+        let _second = iter.next(); // kw("as") -> List
         let third = iter.next();
 
-        // If third is an Ident and first is None (from *), this is namespace import
+        // If third is an Ident, this is a namespace import (* as name)
+        // For named imports {x, y}, third would be op("}") which is a List, not Ident
         if let Some(ParseResult::Ident(id)) = third {
-            if matches!(first, Some(ParseResult::None)) {
-                specifiers.push(ImportSpecifier::Namespace {
-                    local: id,
-                    span: span.clone(),
-                });
-                return specifiers;
-            }
+            specifiers.push(ImportSpecifier::Namespace {
+                local: id,
+                span: span.clone(),
+            });
+            return specifiers;
         }
 
         // Check for named imports: [{, List([specifiers]), }]
@@ -1438,8 +1449,16 @@ fn parse_result_to_property_key(result: ParseResult) -> Option<ObjectPropertyKey
         }
         ParseResult::Expr(e) => Some(ObjectPropertyKey::Computed(Rc::new(e))),
         ParseResult::List(items) => {
+            let len = items.len();
+            // Handle 2-item list: [string_literal, ws] or [number_literal, ws]
+            // from property_key rule's sequence((string_literal, ws)) etc.
+            if len == 2 {
+                let first = items.into_iter().next()?;
+                // Recursively parse the first element (should be Text from string/number literal)
+                return parse_result_to_property_key(first);
+            }
             // Could be computed: ["[", expression, "]"]
-            if items.len() == 3 {
+            if len == 3 {
                 let expr = items.into_iter().nth(1)?;
                 if let Ok(e) = to_expr(expr) {
                     return Some(ObjectPropertyKey::Computed(Rc::new(e)));
@@ -4734,7 +4753,7 @@ fn rule_object_pattern(r: &RuleBuilder) -> Combinator {
                                 let mut prop_iter = prop_parts.into_iter();
                                 let key_result = prop_iter.next()?;
                                 let colon_pattern = prop_iter.next();
-                                let _default = prop_iter.next();
+                                let default_val = prop_iter.next();
 
                                 // Determine key and value
                                 let key = match &key_result {
@@ -4767,6 +4786,26 @@ fn rule_object_pattern(r: &RuleBuilder) -> Combinator {
                                             return None;
                                         }
                                     }
+                                };
+
+                                // If there's a default value, wrap pattern in Pattern::Assignment
+                                let value = if let Some(ParseResult::List(default_parts)) = default_val {
+                                    // default is [=, expression]
+                                    if let Some(expr_result) = default_parts.into_iter().nth(1) {
+                                        if let Ok(expr) = to_expr(expr_result) {
+                                            Pattern::Assignment(AssignmentPattern {
+                                                left: Box::new(value),
+                                                right: Rc::new(expr),
+                                                span: span.clone(),
+                                            })
+                                        } else {
+                                            value
+                                        }
+                                    } else {
+                                        value
+                                    }
+                                } else {
+                                    value
                                 };
 
                                 Some(ObjectPatternProperty::KeyValue {
