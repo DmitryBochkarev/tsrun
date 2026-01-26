@@ -20,10 +20,6 @@ path = "src/bin/tsrun.rs"
 required-features = ["std"]
 
 [[example]]
-name = "profile_lexer"
-required-features = ["dev-tools"]
-
-[[example]]
 name = "profile_parser"
 required-features = ["dev-tools"]
 

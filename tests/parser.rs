@@ -124,7 +124,7 @@ fn test_parenthesized_expression() {
 // Test operator precedence: * should bind tighter than +
 #[test]
 fn test_operator_precedence_ast() {
-    use tsrun::ast::{BinaryExpression, BinaryOp, Expression, Statement};
+    use tsrun::ast::{BinaryOp, Expression, Statement};
     let prog = parse("1 + 2 * 3;");
     assert_eq!(prog.body.len(), 1);
     // Should parse as 1 + (2 * 3), not (1 + 2) * 3
