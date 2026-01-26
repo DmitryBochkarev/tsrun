@@ -176,6 +176,12 @@ pub fn typescript_grammar() -> Grammar {
 fn ast_config(c: AstConfigBuilder) -> AstConfigBuilder {
     c.import("crate::value::JsString")
         .import("crate::prelude::Rc")
+        .import("crate::prelude::Box")
+        .import("crate::prelude::vec")
+        .import("crate::prelude::format")
+        .import("crate::prelude::String")
+        .import("crate::prelude::Vec")
+        .import("crate::prelude::ToString")
         .import("crate::string_dict::StringDict")
         .import("crate::ast::*")
         .string_type("JsString")

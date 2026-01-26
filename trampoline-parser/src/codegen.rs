@@ -46,11 +46,22 @@ impl<'a> CodeGenerator<'a> {
     }
 
     fn emit_builtin_helpers(&mut self) {
+        let string_type = self
+            .grammar
+            .ast_config
+            .string_type
+            .as_deref()
+            .unwrap_or("String");
         // Helper function to decode unicode escapes in identifiers
         self.line("/// Decode unicode escape sequences in identifier text");
-        self.line("fn decode_identifier_escapes(text: &JsString) -> JsString {");
+        self.line(&format!("fn decode_identifier_escapes(text: &{}) -> {} {{", string_type, string_type));
         self.indent += 1;
-        self.line("let s = text.as_ref();");
+        // For String type, use as_str(); for custom types use as_ref()
+        if string_type == "String" {
+            self.line("let s: &str = text.as_str();");
+        } else {
+            self.line("let s: &str = text.as_ref();");
+        }
         self.line("if !s.contains('\\\\') { return text.clone(); }");
         self.line("let mut result = String::with_capacity(s.len());");
         self.line("let mut chars = s.chars().peekable();");
@@ -90,7 +101,12 @@ impl<'a> CodeGenerator<'a> {
         self.line("} else { result.push(c); }");
         self.indent -= 1;
         self.line("}");
-        self.line("JsString::from(result)");
+        // For String type, just return the result directly; for custom types, use From
+        if string_type == "String" {
+            self.line("result");
+        } else {
+            self.line(&format!("{}::from(result)", string_type));
+        }
         self.indent -= 1;
         self.line("}");
         self.blank();
@@ -163,9 +179,9 @@ impl<'a> CodeGenerator<'a> {
         self.indent -= 1;
         self.line("}");
         self.blank();
-        self.line("impl std::fmt::Display for ParseError {");
+        self.line("impl core::fmt::Display for ParseError {");
         self.indent += 1;
-        self.line("fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {");
+        self.line("fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {");
         self.indent += 1;
         self.line("write!(f, \"{} at {}..{}\", self.message, self.span.start, self.span.end)");
         self.indent -= 1;
@@ -173,7 +189,7 @@ impl<'a> CodeGenerator<'a> {
         self.indent -= 1;
         self.line("}");
         self.blank();
-        self.line("impl std::error::Error for ParseError {}");
+        self.line("impl core::error::Error for ParseError {}");
         self.blank();
     }
 
@@ -514,7 +530,7 @@ impl<'a> CodeGenerator<'a> {
         self.line("last_error: Option<ParseError>,");
         // Memoization table: (memo_id, position) -> Option<(result, end_pos, end_line, end_column)>
         // None in the Option means parsing failed at that position
-        self.line("memo: std::collections::HashMap<(usize, usize), Option<(ParseResult, usize, u32, u32)>>,");
+        self.line("memo: hashbrown::HashMap<(usize, usize), Option<(ParseResult, usize, u32, u32)>>,");
         if has_string_dict {
             self.line(&format!("string_dict: &'a mut {},", string_dict_type));
         }
@@ -544,7 +560,7 @@ impl<'a> CodeGenerator<'a> {
         self.line("work_stack: Vec::new(),");
         self.line("result_stack: Vec::new(),");
         self.line("last_error: None,");
-        self.line("memo: std::collections::HashMap::new(),");
+        self.line("memo: hashbrown::HashMap::new(),");
         if has_string_dict {
             self.line("string_dict,");
         }
