@@ -20,6 +20,14 @@ fn parse_fails(source: &str) -> bool {
     Parser::new(source, &mut dict).parse_program().is_err()
 }
 
+/// Parse and measure time, used for performance regression tests
+fn parse_timed(source: &str) -> (bool, std::time::Duration) {
+    let mut dict = StringDict::new();
+    let start = std::time::Instant::now();
+    let result = Parser::new(source, &mut dict).parse_program();
+    (result.is_ok(), start.elapsed())
+}
+
 #[test]
 fn test_variable_declaration() {
     let prog = parse("let x: number = 1;");
@@ -3609,4 +3617,41 @@ fn test_expression_with_comment() {
 fn test_assign_undefined() {
     let prog = parse("undefined = 1");
     assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: nested brackets should not cause exponential backtracking
+// Found by fuzzer - these inputs caused 23s and 177s parse times
+#[test]
+fn test_nested_brackets_performance() {
+    // Test 1: Just nested brackets - should be fast
+    let (_, duration) = parse_timed("[[[[[[[[[[");
+    assert!(
+        duration.as_millis() < 100,
+        "Simple nested brackets should parse in <100ms, took {:?}",
+        duration
+    );
+
+    // Test 2: Identifier followed by nested brackets (computed member access)
+    let (_, duration) = parse_timed("RM[[[[[[[[[[");
+    assert!(
+        duration.as_millis() < 500,
+        "Identifier with brackets should parse in <500ms, took {:?}",
+        duration
+    );
+
+    // Test 3: Full fuzzer input
+    let (_, duration) = parse_timed("([<[RM[[[[[[[[[[']");
+    assert!(
+        duration.as_secs() < 1,
+        "Fuzzer input 1 should parse in <1s, took {:?}",
+        duration
+    );
+
+    // Test 4: Second fuzzer input
+    let (_, duration) = parse_timed("(<F[[[[[[[[[[[[[[");
+    assert!(
+        duration.as_secs() < 1,
+        "Fuzzer input 2 should parse in <1s, took {:?}",
+        duration
+    );
 }

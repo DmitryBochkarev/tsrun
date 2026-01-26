@@ -4674,7 +4674,8 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
         r.parse("literal"),
         r.parse("this_expression"),
         r.parse("super_expression"),
-        r.parse("array_expression"),
+        // Memoized to avoid exponential backtracking on inputs with many [ characters
+        r.memoize(3, r.parse("array_expression")),
         r.parse("object_expression"),
         r.parse("function_expression"),
         r.parse("class_expression"),
@@ -4688,7 +4689,8 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
         r.parse("parenthesized"),
         // angle_bracket_assertion for TypeScript <Type>expr syntax
         // Must come before generic_call_expression since it starts with < directly
-        r.parse("angle_bracket_assertion"),
+        // Memoized to avoid exponential backtracking on inputs with many < characters
+        r.memoize(4, r.parse("angle_bracket_assertion")),
         // generic_call_expression before identifier - matches foo<T>(args)
         // Will fail and backtrack if not followed by proper type args and call
         // Memoized to avoid exponential backtracking on inputs with many < characters
@@ -5765,7 +5767,8 @@ fn rule_base_type(r: &RuleBuilder) -> Combinator {
         // and mapped_type is more specific: { [P in T]: U }
         r.parse("mapped_type"),
         r.parse("object_type"),
-        r.parse("tuple_type"),
+        // Memoized to avoid exponential backtracking on inputs with many [ in type positions
+        r.memoize(5, r.parse("tuple_type")),
         r.parse("parenthesized_type"),
     ))
 }

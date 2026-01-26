@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "trampoline-parser", "trampoline-parser-tests", "grammar"]
+exclude = ["fuzz"]
 
 [package]
 name = "tsrun"
