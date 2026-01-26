@@ -65,6 +65,7 @@ pub fn typescript_grammar() -> Grammar {
         .rule("declare_statement", rule_declare_statement)
         .rule("declare_function", rule_declare_function)
         .rule("declare_module", rule_declare_module)
+        .rule("declare_global", rule_declare_global)
         // Import/Export
         .rule("import_declaration", rule_import_declaration)
         .rule("import_clause", rule_import_clause)
@@ -112,6 +113,7 @@ pub fn typescript_grammar() -> Grammar {
         .rule("new_expression", rule_new_expression)
         .rule("new_callee", rule_new_callee)
         .rule("yield_expression", rule_yield_expression)
+        .rule("angle_bracket_assertion", rule_angle_bracket_assertion)
         .rule("generic_call_expression", rule_generic_call_expression)
         .rule("parenthesized", rule_parenthesized)
         .rule("argument_list", rule_argument_list)
@@ -131,6 +133,9 @@ pub fn typescript_grammar() -> Grammar {
         .rule("rest_pattern", rule_rest_pattern)
         // Type Annotations
         .rule("type_annotation", rule_type_annotation)
+        .rule("return_type_annotation", rule_return_type_annotation)
+        .rule("type_predicate", rule_type_predicate)
+        .rule("asserts_predicate", rule_asserts_predicate)
         .rule("type", rule_type)
         .rule("primary_type", rule_primary_type)
         .rule("keyword_type", rule_keyword_type)
@@ -159,6 +164,7 @@ pub fn typescript_grammar() -> Grammar {
         .rule("keyof_type", rule_keyof_type)
         .rule("infer_type", rule_infer_type)
         .rule("mapped_type", rule_mapped_type)
+        .rule("mapped_type_parameter", rule_mapped_type_parameter)
         .rule("parenthesized_type", rule_parenthesized_type)
 }
 
@@ -2441,7 +2447,7 @@ fn rule_function_declaration(r: &RuleBuilder) -> Combinator {
         op(r, "("),
         r.optional(r.parse("parameter_list")),
         op(r, ")"),
-        r.optional(r.parse("type_annotation")),
+        r.optional(r.parse("return_type_annotation")), // Supports asserts and type predicates
         r.parse("block_statement"),
     ))
     .ast(
@@ -3423,6 +3429,7 @@ fn rule_declare_statement(r: &RuleBuilder) -> Combinator {
     // TypeScript `declare` keyword for ambient declarations
     // These have no runtime effect - the declaration is parsed and passed through
     r.sequence((kw(r, "declare"), r.choice((
+        r.parse("declare_global"),  // Must come before declare_module (more specific)
         r.parse("declare_module"),
         r.parse("declare_function"),
         r.parse("variable_declaration"),
@@ -3450,7 +3457,7 @@ fn rule_declare_function(r: &RuleBuilder) -> Combinator {
         op(r, "("),
         r.optional(r.parse("parameter_list")),
         op(r, ")"),
-        r.optional(r.parse("type_annotation")),
+        r.optional(r.parse("return_type_annotation")), // Supports asserts and type predicates
         r.parse("semicolon"),
     ))
     .ast(
@@ -3476,6 +3483,26 @@ fn rule_declare_function(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected ambient function declaration parts\".to_string(), 0, 0))
         }
+    }",
+    )
+}
+
+fn rule_declare_global(r: &RuleBuilder) -> Combinator {
+    // `declare global { ... }` - global type augmentation
+    // At runtime, this is a no-op (types only affect compile-time)
+    r.sequence((
+        kw(r, "global"),
+        op(r, "{"),
+        r.zero_or_more(r.parse("statement")),
+        op(r, "}"),
+    ))
+    .ast(
+        "|_result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // Return an empty block since declare global is types-only
+        Ok(ParseResult::Stmt(Statement::Block(BlockStatement {
+            body: Rc::from(vec![]),
+            span,
+        })))
     }",
     )
 }
@@ -4446,6 +4473,9 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
         // Memoized to avoid exponential backtracking on inputs with many ( characters
         r.memoize(2, r.parse("arrow_function")),
         r.parse("parenthesized"),
+        // angle_bracket_assertion for TypeScript <Type>expr syntax
+        // Must come before generic_call_expression since it starts with < directly
+        r.parse("angle_bracket_assertion"),
         // generic_call_expression before identifier - matches foo<T>(args)
         // Will fail and backtrack if not followed by proper type args and call
         // Memoized to avoid exponential backtracking on inputs with many < characters
@@ -4653,7 +4683,7 @@ fn rule_function_expression(r: &RuleBuilder) -> Combinator {
         op(r, "("),
         r.optional(r.parse("parameter_list")),
         op(r, ")"),
-        r.optional(r.parse("type_annotation")),
+        r.optional(r.parse("return_type_annotation")), // Supports asserts and type predicates
         r.parse("block_statement"),
     ))
     .ast(
@@ -4710,7 +4740,7 @@ fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
             op(r, "("),
             r.optional(r.parse("parameter_list")),
             op(r, ")"),
-            r.optional(r.parse("type_annotation")),
+            r.optional(r.parse("return_type_annotation")), // Supports asserts and type predicates
             op(r, "=>"),
             r.parse("arrow_body"),
         ))
@@ -5070,6 +5100,32 @@ fn rule_yield_expression(r: &RuleBuilder) -> Combinator {
     )
 }
 
+fn rule_angle_bracket_assertion(r: &RuleBuilder) -> Combinator {
+    // TypeScript angle-bracket type assertion: <Type>expression
+    // Example: <number>value, <string>obj.name
+    r.sequence((
+        op(r, "<"),
+        r.parse("type"),
+        op(r, ">"),
+        r.parse("primary"), // The expression being asserted
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [<, type, >, expr] - extract the expression, wrap in TypeAssertion
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _lt = iter.next();
+            let _type = iter.next();
+            let _gt = iter.next();
+            let expr = iter.next().unwrap_or(ParseResult::None);
+            type_assertion(expr, span)
+        } else {
+            Err(ParseError::new(\"Expected angle bracket assertion parts\".to_string(), 0, 0))
+        }
+    }",
+    )
+}
+
 fn rule_parenthesized(r: &RuleBuilder) -> Combinator {
     r.sequence((op(r, "("), r.parse("expression"), op(r, ")")))
         .ast(
@@ -5349,6 +5405,40 @@ fn rule_type_annotation(r: &RuleBuilder) -> Combinator {
     r.sequence((op(r, ":"), r.parse("type")))
 }
 
+fn rule_return_type_annotation(r: &RuleBuilder) -> Combinator {
+    // Return type can be: regular type, type predicate, or asserts predicate
+    // : asserts condition
+    // : asserts param is Type
+    // : param is Type
+    // : Type
+    r.sequence((
+        op(r, ":"),
+        r.choice((
+            r.parse("asserts_predicate"),
+            r.parse("type_predicate"),
+            r.parse("type"),
+        )),
+    ))
+}
+
+fn rule_type_predicate(r: &RuleBuilder) -> Combinator {
+    // param is Type (user-defined type guard)
+    r.sequence((
+        r.parse("identifier"),
+        kw(r, "is"),
+        r.parse("type"),
+    ))
+}
+
+fn rule_asserts_predicate(r: &RuleBuilder) -> Combinator {
+    // asserts condition OR asserts param is Type
+    r.sequence((
+        kw(r, "asserts"),
+        r.parse("identifier"),
+        r.optional(r.sequence((kw(r, "is"), r.parse("type")))),
+    ))
+}
+
 fn rule_type(r: &RuleBuilder) -> Combinator {
     r.choice((
         r.parse("union_type"),
@@ -5383,9 +5473,11 @@ fn rule_base_type(r: &RuleBuilder) -> Combinator {
         r.parse("infer_type"),
         r.parse("type_reference"),
         r.parse("literal_type"),
+        // mapped_type must come BEFORE object_type because both start with {
+        // and mapped_type is more specific: { [P in T]: U }
+        r.parse("mapped_type"),
         r.parse("object_type"),
         r.parse("tuple_type"),
-        r.parse("mapped_type"),
         r.parse("parenthesized_type"),
     ))
 }
@@ -5583,7 +5675,9 @@ fn rule_tuple_type(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_union_type(r: &RuleBuilder) -> Combinator {
+    // Support leading pipe: | A | B (common in multiline union types)
     r.sequence((
+        r.optional(op(r, "|")), // Leading pipe allowed
         r.parse("primary_type"),
         r.one_or_more(r.sequence((op(r, "|"), r.parse("primary_type")))),
     ))
@@ -5632,6 +5726,7 @@ fn rule_infer_type(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_mapped_type(r: &RuleBuilder) -> Combinator {
+    // { [P in keyof T]: T[P] } or { readonly [P in T]?: U; }
     r.sequence((
         op(r, "{"),
         r.optional(r.choice((
@@ -5640,7 +5735,7 @@ fn rule_mapped_type(r: &RuleBuilder) -> Combinator {
             kw(r, "readonly"),
         ))),
         op(r, "["),
-        r.parse("type_parameter"),
+        r.parse("mapped_type_parameter"), // P in keyof T
         r.optional(r.sequence((kw(r, "as"), r.parse("type")))),
         op(r, "]"),
         r.optional(r.choice((
@@ -5649,7 +5744,17 @@ fn rule_mapped_type(r: &RuleBuilder) -> Combinator {
             op(r, "?"),
         ))),
         r.optional(r.parse("type_annotation")),
+        r.optional(r.parse("type_member_separator")), // Allow trailing ; or ,
         op(r, "}"),
+    ))
+}
+
+fn rule_mapped_type_parameter(r: &RuleBuilder) -> Combinator {
+    // P in keyof T or P in T
+    r.sequence((
+        r.parse("identifier"), // P
+        kw(r, "in"),           // in
+        r.parse("type"),       // keyof T or just T (keyof is part of type)
     ))
 }
 

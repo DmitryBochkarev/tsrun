@@ -1037,6 +1037,111 @@ fn test_keyof() {
     );
 }
 
+// Regression: Verify simple mapped type syntax parses and is stripped
+#[test]
+fn test_mapped_type_simple() {
+    // Just verify the mapped type syntax parses - types are stripped at runtime
+    assert_eq!(
+        eval(
+            r#"
+            type Partial<T> = { [P in keyof T]?: T[P] };
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// Regression: Verify mapped type with readonly modifier
+#[test]
+fn test_mapped_type_readonly() {
+    assert_eq!(
+        eval(
+            r#"
+            type Readonly<T> = { readonly [P in keyof T]: T[P] };
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// Regression: Test mapped type followed by interface
+#[test]
+fn test_mapped_type_with_interface() {
+    assert_eq!(
+        eval(
+            r#"
+            type Readonly<T> = { readonly [P in keyof T]: T[P] };
+            interface Point { x: number; y: number; }
+            let p = { x: 5, y: 10 };
+            p.x + p.y
+        "#
+        ),
+        JsValue::Number(15.0)
+    );
+}
+
+// Regression: Test mapped type with multiline formatting and semicolon
+#[test]
+fn test_mapped_type_multiline() {
+    assert_eq!(
+        eval(
+            r#"
+type Readonly<T> = {
+    readonly [P in keyof T]: T[P];
+};
+42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// Regression: Test declare const
+#[test]
+fn test_declare_const_simple() {
+    assert_eq!(
+        eval(
+            r#"
+            declare const process: { env: Record<string, string> };
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// Regression: Test declare function
+#[test]
+fn test_declare_function_simple() {
+    assert_eq!(
+        eval(
+            r#"
+            declare function require(id: string): any;
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// Regression: Test declare class
+#[test]
+fn test_declare_class_simple() {
+    assert_eq!(
+        eval(
+            r#"
+            declare class EventEmitter {
+                on(event: string, listener: Function): void;
+            }
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
 #[test]
 fn test_mapped_types() {
     assert_eq!(
