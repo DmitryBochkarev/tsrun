@@ -2686,7 +2686,7 @@ fn rule_class_body(r: &RuleBuilder) -> Combinator {
 fn rule_class_member(r: &RuleBuilder) -> Combinator {
     r.choice((
         r.parse("class_constructor"),
-        r.parse("abstract_method"),  // Must be before class_method
+        r.parse("abstract_method"), // Must be before class_method
         r.parse("class_method"),
         r.parse("class_property"),
         r.parse("static_block"),
@@ -3499,9 +3499,13 @@ fn rule_continue_statement(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_throw_statement(r: &RuleBuilder) -> Combinator {
-    r.sequence((kw(r, "throw"), r.parse("expression"), r.optional(r.parse("semicolon"))))
-        .ast(
-            "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    r.sequence((
+        kw(r, "throw"),
+        r.parse("expression"),
+        r.optional(r.parse("semicolon")),
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
             let _throw_kw = iter.next();
@@ -3514,15 +3518,16 @@ fn rule_throw_statement(r: &RuleBuilder) -> Combinator {
             Err(ParseError::new(\"Expected throw statement parts\".to_string(), 0, 0))
         }
     }",
-        )
+    )
 }
 
 fn rule_debugger_statement(r: &RuleBuilder) -> Combinator {
-    r.sequence((kw(r, "debugger"), r.optional(r.parse("semicolon")))).ast(
-        "|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    r.sequence((kw(r, "debugger"), r.optional(r.parse("semicolon"))))
+        .ast(
+            "|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
             Ok(ParseResult::Stmt(Statement::Debugger))
         }",
-    )
+        )
 }
 
 fn rule_labeled_statement(r: &RuleBuilder) -> Combinator {
@@ -3567,9 +3572,11 @@ fn rule_expression_statement(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_empty_statement(r: &RuleBuilder) -> Combinator {
-    op(r, ";").ast("|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    op(r, ";").ast(
+        "|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
         Ok(ParseResult::Stmt(Statement::Empty))
-    }")
+    }",
+    )
 }
 
 fn rule_semicolon(r: &RuleBuilder) -> Combinator {
@@ -3690,7 +3697,7 @@ fn rule_ambient_statement(r: &RuleBuilder) -> Combinator {
     // Ambient statements inside declare namespace/module
     // These include function signatures (no body), interfaces, type aliases, etc.
     r.choice((
-        r.parse("declare_function"),  // function foo(): void;
+        r.parse("declare_function"), // function foo(): void;
         r.parse("interface_declaration"),
         r.parse("type_alias_declaration"),
         r.parse("variable_declaration"),
@@ -4431,7 +4438,11 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                 )
                 // === Bitwise OR ===
                 .infix(
-                    r.sequence((r.parse("ws"), r.lit("|"), r.not_followed_by(r.choice((r.lit("|"), r.lit("=")))))),
+                    r.sequence((
+                        r.parse("ws"),
+                        r.lit("|"),
+                        r.not_followed_by(r.choice((r.lit("|"), r.lit("=")))),
+                    )),
                     7,
                     Assoc::Left,
                     "|l, r, s| binary(l, r, BinaryOp::BitOr, s)",
@@ -4445,7 +4456,11 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                 )
                 // === Bitwise AND ===
                 .infix(
-                    r.sequence((r.parse("ws"), r.lit("&"), r.not_followed_by(r.choice((r.lit("&"), r.lit("=")))))),
+                    r.sequence((
+                        r.parse("ws"),
+                        r.lit("&"),
+                        r.not_followed_by(r.choice((r.lit("&"), r.lit("=")))),
+                    )),
                     9,
                     Assoc::Left,
                     "|l, r, s| binary(l, r, BinaryOp::BitAnd, s)",
@@ -4489,13 +4504,23 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                     "|l, r, s| binary(l, r, BinaryOp::GtEq, s)",
                 )
                 .infix(
-                    r.sequence((r.parse("ws"), r.lit("<"), r.not_followed_by(r.lit("<")), r.not_followed_by(r.lit("=")))),
+                    r.sequence((
+                        r.parse("ws"),
+                        r.lit("<"),
+                        r.not_followed_by(r.lit("<")),
+                        r.not_followed_by(r.lit("=")),
+                    )),
                     11,
                     Assoc::Left,
                     "|l, r, s| binary(l, r, BinaryOp::Lt, s)",
                 )
                 .infix(
-                    r.sequence((r.parse("ws"), r.lit(">"), r.not_followed_by(r.lit(">")), r.not_followed_by(r.lit("=")))),
+                    r.sequence((
+                        r.parse("ws"),
+                        r.lit(">"),
+                        r.not_followed_by(r.lit(">")),
+                        r.not_followed_by(r.lit("=")),
+                    )),
                     11,
                     Assoc::Left,
                     "|l, r, s| binary(l, r, BinaryOp::Gt, s)",
@@ -4580,15 +4605,35 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                 )
                 // === Prefix operators ===
                 // Note: prefix operators need leading ws to work as right operand of infix
-                .prefix(ws_prefix(r, "++"), 16, "|e, s| update(e, UpdateOp::Increment, true, s)")
-                .prefix(ws_prefix(r, "--"), 16, "|e, s| update(e, UpdateOp::Decrement, true, s)")
+                .prefix(
+                    ws_prefix(r, "++"),
+                    16,
+                    "|e, s| update(e, UpdateOp::Increment, true, s)",
+                )
+                .prefix(
+                    ws_prefix(r, "--"),
+                    16,
+                    "|e, s| update(e, UpdateOp::Decrement, true, s)",
+                )
                 .prefix(ws_prefix(r, "-"), 16, "|e, s| unary(e, UnaryOp::Minus, s)")
                 .prefix(ws_prefix(r, "+"), 16, "|e, s| unary(e, UnaryOp::Plus, s)")
                 .prefix(ws_prefix(r, "!"), 16, "|e, s| unary(e, UnaryOp::Not, s)")
                 .prefix(ws_prefix(r, "~"), 16, "|e, s| unary(e, UnaryOp::BitNot, s)")
-                .prefix(ws_prefix_kw(r, "typeof"), 16, "|e, s| unary(e, UnaryOp::Typeof, s)")
-                .prefix(ws_prefix_kw(r, "void"), 16, "|e, s| unary(e, UnaryOp::Void, s)")
-                .prefix(ws_prefix_kw(r, "delete"), 16, "|e, s| unary(e, UnaryOp::Delete, s)")
+                .prefix(
+                    ws_prefix_kw(r, "typeof"),
+                    16,
+                    "|e, s| unary(e, UnaryOp::Typeof, s)",
+                )
+                .prefix(
+                    ws_prefix_kw(r, "void"),
+                    16,
+                    "|e, s| unary(e, UnaryOp::Void, s)",
+                )
+                .prefix(
+                    ws_prefix_kw(r, "delete"),
+                    16,
+                    "|e, s| unary(e, UnaryOp::Delete, s)",
+                )
                 .prefix(ws_prefix_kw(r, "await"), 16, "|e, s| await_expr(e, s)")
                 // === Postfix operators (highest precedence) ===
                 .postfix("++", 17, "|e, s| update(e, UpdateOp::Increment, false, s)")
@@ -4601,8 +4646,22 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                 )
                 // Call expressions (optional chaining first to match longer pattern)
                 // Use argument rule to support spread in function calls
-                .postfix_call_with_arg_rule("?.(", ")", ",", "argument", 18, "|c, a, s| call(c, a, true, s)")
-                .postfix_call_with_arg_rule("(", ")", ",", "argument", 18, "|c, a, s| call(c, a, false, s)")
+                .postfix_call_with_arg_rule(
+                    "?.(",
+                    ")",
+                    ",",
+                    "argument",
+                    18,
+                    "|c, a, s| call(c, a, true, s)",
+                )
+                .postfix_call_with_arg_rule(
+                    "(",
+                    ")",
+                    ",",
+                    "argument",
+                    18,
+                    "|c, a, s| call(c, a, false, s)",
+                )
                 // Computed member (optional chaining first, must come before ?. to match longer pattern)
                 .postfix_index("?.[", "]", 18, "|o, e, s| member_computed(o, e, true, s)")
                 .postfix_index("[", "]", 18, "|o, e, s| member_computed(o, e, false, s)")
@@ -4611,7 +4670,11 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                 .postfix_member("?.", 18, "|o, p, s| member(o, p, true, s)")
                 .postfix_member(".", 18, "|o, p, s| member(o, p, false, s)")
                 // Tagged template literals: tag`template`
-                .postfix_rule("template_literal", 18, "|tag, template, s| tagged_template(tag, template, s)")
+                .postfix_rule(
+                    "template_literal",
+                    18,
+                    "|tag, template, s| tagged_template(tag, template, s)",
+                )
         }),
         // Optional `as Type` suffixes (TypeScript type assertions)
         r.zero_or_more(r.sequence((
@@ -4772,11 +4835,7 @@ fn rule_literal(r: &RuleBuilder) -> Combinator {
 fn unicode_escape(r: &RuleBuilder) -> Combinator {
     r.choice((
         // \u{XXXXX} form (1-6 hex digits)
-        r.sequence((
-            r.lit("\\u{"),
-            r.one_or_more(r.hex_digit()),
-            r.char('}'),
-        )),
+        r.sequence((r.lit("\\u{"), r.one_or_more(r.hex_digit()), r.char('}'))),
         // \uXXXX form (exactly 4 hex digits)
         r.sequence((
             r.lit("\\u"),
@@ -4795,16 +4854,15 @@ fn rule_identifier(r: &RuleBuilder) -> Combinator {
     let ident_cont_or_escape = r.choice((r.ident_cont(), unicode_escape(r)));
 
     r.sequence((
-        r.capture(r.sequence((
-            ident_start_or_escape,
-            r.zero_or_more(ident_cont_or_escape),
-        ))),
+        r.capture(r.sequence((ident_start_or_escape, r.zero_or_more(ident_cont_or_escape)))),
         r.parse("ws"),
     ))
-    .ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         let name = decode_identifier(&result.into_text());
         Ok(ParseResult::Ident(Identifier { name, span }))
-    }")
+    }",
+    )
 }
 
 fn rule_this_expression(r: &RuleBuilder) -> Combinator {
@@ -5421,8 +5479,10 @@ fn rule_argument(r: &RuleBuilder) -> Combinator {
     // Add leading whitespace since call argument parsing doesn't consume ws after comma
     r.sequence((
         r.parse("ws"),
-        r.choice((r.parse("spread_element"), r.parse("assignment_expression")))
-    )).ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        r.choice((r.parse("spread_element"), r.parse("assignment_expression"))),
+    ))
+    .ast(
+        "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
         // Extract the inner result (skip the ws which produces None)
         match result {
             ParseResult::List(items) => {
@@ -5435,7 +5495,8 @@ fn rule_argument(r: &RuleBuilder) -> Combinator {
             }
             other => Ok(other)
         }
-    }")
+    }",
+    )
 }
 
 // Parameters
@@ -5458,7 +5519,11 @@ fn rule_parameter(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_accessibility_modifier(r: &RuleBuilder) -> Combinator {
-    r.choice((captured_kw(r, "public"), captured_kw(r, "private"), captured_kw(r, "protected")))
+    r.choice((
+        captured_kw(r, "public"),
+        captured_kw(r, "private"),
+        captured_kw(r, "protected"),
+    ))
 }
 
 fn rule_decorator(r: &RuleBuilder) -> Combinator {
@@ -5712,11 +5777,7 @@ fn rule_return_type_annotation(r: &RuleBuilder) -> Combinator {
 
 fn rule_type_predicate(r: &RuleBuilder) -> Combinator {
     // param is Type (user-defined type guard)
-    r.sequence((
-        r.parse("identifier"),
-        kw(r, "is"),
-        r.parse("type"),
-    ))
+    r.sequence((r.parse("identifier"), kw(r, "is"), r.parse("type")))
 }
 
 fn rule_asserts_predicate(r: &RuleBuilder) -> Combinator {
@@ -5732,7 +5793,7 @@ fn rule_type(r: &RuleBuilder) -> Combinator {
     r.choice((
         r.parse("union_type"),
         r.parse("intersection_type"),
-        r.parse("constructor_type"),  // new (...) => type
+        r.parse("constructor_type"), // new (...) => type
         r.parse("function_type"),
         r.parse("conditional_type"),
         r.parse("primary_type"),
@@ -5761,7 +5822,9 @@ fn rule_base_type(r: &RuleBuilder) -> Combinator {
         r.parse("typeof_type"),
         r.parse("keyof_type"),
         r.parse("infer_type"),
-        r.parse("type_reference"),
+        // Memoized to avoid exponential backtracking on inputs with many < in type positions
+        // type_reference has optional type_arguments which tries to parse <type, type, ...>
+        r.memoize(7, r.parse("type_reference")),
         r.parse("literal_type"),
         // mapped_type must come BEFORE object_type because both start with {
         // and mapped_type is more specific: { [P in T]: U }

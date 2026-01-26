@@ -596,11 +596,19 @@ fn test_template_literal() {
 fn test_template_literal_with_function_call() {
     // Test simple template as expression statement - simpler case
     let prog1 = parse("`hello`");
-    assert_eq!(prog1.body.len(), 1, "Simple template as expression statement");
+    assert_eq!(
+        prog1.body.len(),
+        1,
+        "Simple template as expression statement"
+    );
 
     // Test template with expression as expression statement
     let prog2 = parse("`${x}`");
-    assert_eq!(prog2.body.len(), 1, "Template with expr as expression statement");
+    assert_eq!(
+        prog2.body.len(),
+        1,
+        "Template with expr as expression statement"
+    );
 }
 
 #[test]
@@ -2837,22 +2845,19 @@ fn test_debug_parse_error() {
         // Context: parenthesized object
         ("({ a: 1 })", "parens obj + literal"),
         ("({ a: x })", "parens obj + ident"),
-        ("({ a: x.y })", "parens obj + member"),  // FAILS
+        ("({ a: x.y })", "parens obj + member"),   // FAILS
         ("({ a: f() })", "parens obj + call"),     // FAILS
         ("({ a: x[0] })", "parens obj + index"),   // FAILS
         ("({ a: 1 + 2 })", "parens obj + binary"), // infix
         ("({ a: -x })", "parens obj + unary"),     // prefix
-
         // Context: assignment RHS
         ("o = { a: 1 }", "assign obj + literal"),
         ("o = { a: x }", "assign obj + ident"),
-        ("o = { a: x.y }", "assign obj + member"),  // FAILS
+        ("o = { a: x.y }", "assign obj + member"), // FAILS
         ("o = { a: 1 + 2 }", "assign obj + binary"),
-
         // Context: variable declaration
         ("let o = { a: x.y }", "vardecl obj + member"), // works!
         ("let o = { a: 1 + 2 }", "vardecl obj + binary"),
-
         // Context: comparison
         ("({ a: x.y }) === 1", "parens obj member + compare"),
     ];
@@ -2862,7 +2867,11 @@ fn test_debug_parse_error() {
         let result = Parser::new(input, &mut dict).parse_program();
         match result {
             Ok(prog) => {
-                let status = if prog.body.len() == 1 { "OK" } else { "FAIL (0 stmts)" };
+                let status = if prog.body.len() == 1 {
+                    "OK"
+                } else {
+                    "FAIL (0 stmts)"
+                };
                 eprintln!("{}: {} - {}", desc, status, input);
             }
             Err(e) => eprintln!("{}: ERROR {:?} - {}", desc, e, input),
@@ -2902,7 +2911,10 @@ fn test_debug_show_error() {
     // Object literal without parens
     let mut dict = StringDict::new();
     let mut p4 = Parser::new("let o = { a: x.y }", &mut dict);
-    eprintln!("'let o = {{ a: x.y }}': {:?}", p4.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'let o = {{ a: x.y }}': {:?}",
+        p4.parse_program().map(|p| p.body.len())
+    );
 
     // Empty object in parens
     let mut dict = StringDict::new();
@@ -2912,65 +2924,102 @@ fn test_debug_show_error() {
     // Object with simple value in parens
     let mut dict = StringDict::new();
     let mut p6 = Parser::new("({ a: 1 })", &mut dict);
-    eprintln!("'({{ a: 1 }})': {:?}", p6.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'({{ a: 1 }})': {:?}",
+        p6.parse_program().map(|p| p.body.len())
+    );
 
     // Object with member value WITHOUT parens - this should work
     let mut dict = StringDict::new();
     let mut p7 = Parser::new("{ a: x.y }", &mut dict);
     let r7 = p7.parse_program();
-    eprintln!("'{{ a: x.y }}': {} statements, body: {:?}", r7.as_ref().map(|p| p.body.len()).unwrap_or(0), r7.as_ref().ok().map(|p| &p.body));
+    eprintln!(
+        "'{{ a: x.y }}': {} statements, body: {:?}",
+        r7.as_ref().map(|p| p.body.len()).unwrap_or(0),
+        r7.as_ref().ok().map(|p| &p.body)
+    );
 
     // Compare: simple member in function return
     let mut dict = StringDict::new();
     let mut p8 = Parser::new("function f() { return x.y }", &mut dict);
-    eprintln!("'function f() {{ return x.y }}': {:?}", p8.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'function f() {{ return x.y }}': {:?}",
+        p8.parse_program().map(|p| p.body.len())
+    );
 
     // Object with member in function return
     let mut dict = StringDict::new();
     let mut p9 = Parser::new("function f() { return { a: x.y } }", &mut dict);
-    eprintln!("'function f() {{ return {{ a: x.y }} }}': {:?}", p9.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'function f() {{ return {{ a: x.y }} }}': {:?}",
+        p9.parse_program().map(|p| p.body.len())
+    );
 
     // Test labeled statement specifically
     let mut dict = StringDict::new();
     let mut p10 = Parser::new("{ a: x }", &mut dict);
-    eprintln!("'{{ a: x }}' (labeled, no member): {:?}", p10.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'{{ a: x }}' (labeled, no member): {:?}",
+        p10.parse_program().map(|p| p.body.len())
+    );
 
     // Member access at top level
     let mut dict = StringDict::new();
     let mut p11 = Parser::new("a.b", &mut dict);
-    eprintln!("'a.b' (top level): {:?}", p11.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'a.b' (top level): {:?}",
+        p11.parse_program().map(|p| p.body.len())
+    );
 
     // Block with member access
     let mut dict = StringDict::new();
     let mut p12 = Parser::new("{ a.b }", &mut dict);
-    eprintln!("'{{ a.b }}' (in block): {:?}", p12.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'{{ a.b }}' (in block): {:?}",
+        p12.parse_program().map(|p| p.body.len())
+    );
 
     // Block with simple expr
     let mut dict = StringDict::new();
     let mut p13 = Parser::new("{ x }", &mut dict);
-    eprintln!("'{{ x }}' (in block): {:?}", p13.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'{{ x }}' (in block): {:?}",
+        p13.parse_program().map(|p| p.body.len())
+    );
 
     // Block with member + semicolon
     let mut dict = StringDict::new();
     let mut p14 = Parser::new("{ a.b; }", &mut dict);
-    eprintln!("'{{ a.b; }}' (member + semicolon): {:?}", p14.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'{{ a.b; }}' (member + semicolon): {:?}",
+        p14.parse_program().map(|p| p.body.len())
+    );
 
     // Block with call
     let mut dict = StringDict::new();
     let mut p15 = Parser::new("{ a.b() }", &mut dict);
     let r15 = p15.parse_program();
-    eprintln!("'{{ a.b() }}' (call): {:?}", r15.as_ref().map(|p| p.body.len()));
+    eprintln!(
+        "'{{ a.b() }}' (call): {:?}",
+        r15.as_ref().map(|p| p.body.len())
+    );
     eprintln!("'{{ a.b() }}' FULL: {:?}", r15);
 
     // Block with binary expr
     let mut dict = StringDict::new();
     let mut p16 = Parser::new("{ a + b }", &mut dict);
-    eprintln!("'{{ a + b }}' (binary): {:?}", p16.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'{{ a + b }}' (binary): {:?}",
+        p16.parse_program().map(|p| p.body.len())
+    );
 
     // Check member access with longer chains
     let mut dict = StringDict::new();
     let mut p17 = Parser::new("{ a.b.c }", &mut dict);
-    eprintln!("'{{ a.b.c }}' (chain): {:?}", p17.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'{{ a.b.c }}' (chain): {:?}",
+        p17.parse_program().map(|p| p.body.len())
+    );
 
     // Check with just 'a.' - partial member
     let mut dict = StringDict::new();
@@ -2980,12 +3029,18 @@ fn test_debug_show_error() {
     // Block and then statement after
     let mut dict = StringDict::new();
     let mut p19 = Parser::new("{ } a.b", &mut dict);
-    eprintln!("'{{ }} a.b' (after block): {:?}", p19.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'{{ }} a.b' (after block): {:?}",
+        p19.parse_program().map(|p| p.body.len())
+    );
 
     // If statement with member
     let mut dict = StringDict::new();
     let mut p20 = Parser::new("if (true) a.b", &mut dict);
-    eprintln!("'if (true) a.b': {:?}", p20.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'if (true) a.b': {:?}",
+        p20.parse_program().map(|p| p.body.len())
+    );
 
     // Full AST of { a.b }
     let mut dict = StringDict::new();
@@ -3002,38 +3057,62 @@ fn test_debug_show_error() {
     // Test without spaces to eliminate whitespace issues
     let mut dict = StringDict::new();
     let mut p23 = Parser::new("{a+b}", &mut dict);
-    eprintln!("'{{a+b}}' (no spaces): {:?}", p23.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'{{a+b}}' (no spaces): {:?}",
+        p23.parse_program().map(|p| p.body.len())
+    );
 
     let mut dict = StringDict::new();
     let mut p24 = Parser::new("{a.b}", &mut dict);
-    eprintln!("'{{a.b}}' (no spaces): {:?}", p24.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'{{a.b}}' (no spaces): {:?}",
+        p24.parse_program().map(|p| p.body.len())
+    );
 
     // Test with space only after expression
     let mut dict = StringDict::new();
     let mut p25 = Parser::new("{a.b }", &mut dict);
-    eprintln!("'{{a.b }}' (space before close): {:?}", p25.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'{{a.b }}' (space before close): {:?}",
+        p25.parse_program().map(|p| p.body.len())
+    );
 
     let mut dict = StringDict::new();
     let mut p26 = Parser::new("{a+b }", &mut dict);
-    eprintln!("'{{a+b }}' (space before close): {:?}", p26.parse_program().map(|p| p.body.len()));
+    eprintln!(
+        "'{{a+b }}' (space before close): {:?}",
+        p26.parse_program().map(|p| p.body.len())
+    );
 
     // Detailed postfix vs infix comparison
     let mut dict = StringDict::new();
-    let mut p27 = Parser::new("{ a.b }", &mut dict);  // spaces around
-    eprintln!("'{{ a.b }}' (spaces around): {:?}", p27.parse_program().map(|p| p.body.len()));
+    let mut p27 = Parser::new("{ a.b }", &mut dict); // spaces around
+    eprintln!(
+        "'{{ a.b }}' (spaces around): {:?}",
+        p27.parse_program().map(|p| p.body.len())
+    );
 
     let mut dict = StringDict::new();
-    let mut p28 = Parser::new("{ a+b }", &mut dict);  // spaces around
-    eprintln!("'{{ a+b }}' (spaces around): {:?}", p28.parse_program().map(|p| p.body.len()));
+    let mut p28 = Parser::new("{ a+b }", &mut dict); // spaces around
+    eprintln!(
+        "'{{ a+b }}' (spaces around): {:?}",
+        p28.parse_program().map(|p| p.body.len())
+    );
 
     // Check if Pratt parser ends at different positions
     let mut dict = StringDict::new();
-    let mut p29 = Parser::new("a.b}", &mut dict);  // member followed by }
-    eprintln!("'a.b}}' (member then close): {:?}", p29.parse_program().map(|p| p.body.len()));
+    let mut p29 = Parser::new("a.b}", &mut dict); // member followed by }
+    eprintln!(
+        "'a.b}}' (member then close): {:?}",
+        p29.parse_program().map(|p| p.body.len())
+    );
 
     let mut dict = StringDict::new();
-    let mut p30 = Parser::new("a+b}", &mut dict);  // binary followed by }
-    eprintln!("'a+b}}' (binary then close): {:?}", p30.parse_program().map(|p| p.body.len()));
+    let mut p30 = Parser::new("a+b}", &mut dict); // binary followed by }
+    eprintln!(
+        "'a+b}}' (binary then close): {:?}",
+        p30.parse_program().map(|p| p.body.len())
+    );
 
     // Full AST for { a+b } to see what's different
     let mut dict = StringDict::new();
@@ -3057,7 +3136,10 @@ fn test_debug_show_error() {
     let mut dict = StringDict::new();
     let mut p34 = Parser::new("const Foo = class { getValue() { return 1; } };", &mut dict);
     let r34 = p34.parse_program();
-    eprintln!("'const Foo = class {{ getValue() {{ }} }};' result: {:?}", r34.as_ref().map(|p| p.body.len()));
+    eprintln!(
+        "'const Foo = class {{ getValue() {{ }} }};' result: {:?}",
+        r34.as_ref().map(|p| p.body.len())
+    );
 
     // Simple class expression
     let mut dict = StringDict::new();
@@ -3109,9 +3191,15 @@ fn test_debug_show_error() {
 
     // Full expression from failing test
     let mut dict = StringDict::new();
-    let mut p_bind = Parser::new("Function.prototype.call.bind(Array.prototype.push)", &mut dict);
+    let mut p_bind = Parser::new(
+        "Function.prototype.call.bind(Array.prototype.push)",
+        &mut dict,
+    );
     let r_bind = p_bind.parse_program();
-    eprintln!("'Function.prototype.call.bind(Array.prototype.push)' FULL: {:?}", r_bind);
+    eprintln!(
+        "'Function.prototype.call.bind(Array.prototype.push)' FULL: {:?}",
+        r_bind
+    );
 
     // Decorated class expression
     let mut dict = StringDict::new();
@@ -3141,7 +3229,10 @@ fn test_debug_show_error() {
     let mut dict = StringDict::new();
     let mut p_named = Parser::new("const C = class Foo extends Base { };", &mut dict);
     let r_named = p_named.parse_program();
-    eprintln!("'const C = class Foo extends Base {{ }};' FULL: {:?}", r_named);
+    eprintln!(
+        "'const C = class Foo extends Base {{ }};' FULL: {:?}",
+        r_named
+    );
 
     // Test class declaration with extends (should work)
     let mut dict = StringDict::new();
@@ -3348,10 +3439,16 @@ fn test_async_function_in_member_assignment() {
             if let Expression::Assignment(_) = expr.expression.as_ref() {
                 // Good - it's an assignment
             } else {
-                panic!("Expected assignment expression, got {:?}", std::mem::discriminant(expr.expression.as_ref()));
+                panic!(
+                    "Expected assignment expression, got {:?}",
+                    std::mem::discriminant(expr.expression.as_ref())
+                );
             }
         }
-        other => panic!("Expected expression statement, got {:?}", std::mem::discriminant(other)),
+        other => panic!(
+            "Expected expression statement, got {:?}",
+            std::mem::discriminant(other)
+        ),
     }
 }
 
@@ -3368,7 +3465,11 @@ fn test_postfix_member_in_block_asi() {
 fn test_call_expression_in_block_asi() {
     // Call expression in block without semicolon (relies on ASI)
     let prog = parse("{ f() }");
-    assert_eq!(prog.body.len(), 1, "Should parse block with call expression");
+    assert_eq!(
+        prog.body.len(),
+        1,
+        "Should parse block with call expression"
+    );
 
     // Member call in block without semicolon
     let prog2 = parse("{ a.b() }");
@@ -3381,9 +3482,15 @@ fn test_class_expression_init() {
     let prog = parse("const Foo = class { };");
     assert_eq!(prog.body.len(), 1);
     if let Statement::VariableDeclaration(decl) = &prog.body[0] {
-        assert!(decl.declarations[0].init.is_some(), "Class expression should be captured as init");
+        assert!(
+            decl.declarations[0].init.is_some(),
+            "Class expression should be captured as init"
+        );
         if let Some(init) = &decl.declarations[0].init {
-            assert!(matches!(init.as_ref(), Expression::Class(_)), "Init should be Class expression");
+            assert!(
+                matches!(init.as_ref(), Expression::Class(_)),
+                "Init should be Class expression"
+            );
         }
     } else {
         panic!("Expected variable declaration");
@@ -3457,7 +3564,10 @@ fn test_object_method_with_return_type() {
     let prog = parse("let calc = { add(a: number, b: number): number { return a + b; } };");
     assert_eq!(prog.body.len(), 1);
     if let Statement::VariableDeclaration(decl) = &prog.body[0] {
-        assert!(decl.declarations[0].init.is_some(), "Object literal should be captured");
+        assert!(
+            decl.declarations[0].init.is_some(),
+            "Object literal should be captured"
+        );
         if let Some(Expression::Object(_)) = decl.declarations[0].init.as_deref() {
             // OK
         } else {
@@ -3481,7 +3591,10 @@ fn test_new_member_expression_callee() {
             if let Expression::Member(_) = &*new_expr.callee {
                 // Good, callee is Member expression
             } else {
-                panic!("Expected callee to be MemberExpression, got {:?}", new_expr.callee);
+                panic!(
+                    "Expected callee to be MemberExpression, got {:?}",
+                    new_expr.callee
+                );
             }
         } else {
             panic!("Expected NewExpression, got {:?}", stmt.expression);
@@ -3543,7 +3656,10 @@ fn test_class_getter_numeric_key() {
     if let Statement::ClassDeclaration(class) = &prog.body[0] {
         if let ClassMember::Method(method) = &class.body.members[0] {
             assert_eq!(method.kind, MethodKind::Get, "Should be a getter");
-            assert!(matches!(&method.key, ObjectPropertyKey::Number(_)), "Key should be Number");
+            assert!(
+                matches!(&method.key, ObjectPropertyKey::Number(_)),
+                "Key should be Number"
+            );
         } else {
             panic!("Expected Method");
         }
@@ -3652,6 +3768,39 @@ fn test_nested_brackets_performance() {
     assert!(
         duration.as_secs() < 1,
         "Fuzzer input 2 should parse in <1s, took {:?}",
+        duration
+    );
+}
+
+// Regression: nested angle brackets in type positions should not cause exponential backtracking
+// Found by fuzzer - slow-unit-3f44657f552e2d188d7cd723062b17d88d8f8526
+#[test]
+fn test_nested_angle_brackets_in_types() {
+    // Test 1: Nested < characters in type assertion contexts
+    let (_, duration) = parse_timed("<k<k<k<k<k<k<k<k<k<k");
+    assert!(
+        duration.as_millis() < 500,
+        "Nested angle brackets should parse in <500ms, took {:?}",
+        duration
+    );
+
+    // Test 2: Fuzz artifact 1 - nested type assertions with identifiers
+    let (_, duration) = parse_timed(
+        "<kvvvvvvv<k<f,vvvvrvv<kkf,k<vv6vvv<kvvvvvv<vv6v6vvv<kvvvvvv<vv6vvv<kvvvvvvv<k<vvvvvvv&fvvvvv",
+    );
+    assert!(
+        duration.as_secs() < 1,
+        "Fuzz artifact 1 should parse in <1s, took {:?}",
+        duration
+    );
+
+    // Test 3: Fuzz artifact 2 - similar pattern with more nesting
+    let (_, duration) = parse_timed(
+        "<kvvvvvvv<k<vvvv<kvvvvvvv<k<vvvvvvv3vvvvv&f,k<vvzvvv<kvvvvvvv<k<vvvvvvv,vvvvv&f,k<Lkvv&f,k<Lk",
+    );
+    assert!(
+        duration.as_secs() < 1,
+        "Fuzz artifact 2 should parse in <1s, took {:?}",
         duration
     );
 }

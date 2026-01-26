@@ -36,9 +36,6 @@ run_target() {
 }
 
 case "$TARGET" in
-    lexer|fuzz_lexer)
-        run_target fuzz_lexer
-        ;;
     parser|fuzz_parser)
         run_target fuzz_parser
         ;;
@@ -46,12 +43,16 @@ case "$TARGET" in
         run_target fuzz_interpreter
         ;;
     all)
-        run_target fuzz_lexer
         run_target fuzz_parser
         run_target fuzz_interpreter
         ;;
     list)
         cargo +nightly fuzz list
+        ;;
+    clean)
+        echo "Cleaning fuzz artifacts..."
+        rm -rf "$PROJECT_ROOT/fuzz/artifacts"/*
+        echo "Artifacts cleaned."
         ;;
     *)
         echo "Unknown target: $TARGET"
@@ -59,16 +60,17 @@ case "$TARGET" in
         echo "Usage: $0 [target] [duration_seconds]"
         echo ""
         echo "Targets:"
-        echo "  lexer|fuzz_lexer       - Fuzz the lexer"
         echo "  parser|fuzz_parser     - Fuzz the parser"
         echo "  interpreter|fuzz_interpreter - Fuzz the full interpreter"
         echo "  all                    - Run all targets (default)"
         echo "  list                   - List available fuzz targets"
+        echo "  clean                  - Remove all fuzz artifacts"
         echo ""
         echo "Examples:"
         echo "  $0                     # All targets, 60s each"
-        echo "  $0 lexer 30            # Lexer only, 30s"
+        echo "  $0 parser 30           # Parser only, 30s"
         echo "  $0 interpreter 300     # Interpreter, 5 minutes"
+        echo "  $0 clean               # Clean artifacts"
         exit 1
         ;;
 esac
