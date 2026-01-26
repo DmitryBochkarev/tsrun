@@ -787,10 +787,7 @@ fn test_function_constructor_syntax_error() {
     // Note: "return return" is valid with ASI (produces two return statements)
     // Use actually invalid syntax like unclosed brace
     use super::throws_error;
-    assert!(throws_error(
-        "const f = new Function('{');",
-        "SyntaxError"
-    ));
+    assert!(throws_error("const f = new Function('{');", "SyntaxError"));
 }
 
 #[test]
@@ -1636,10 +1633,7 @@ fn test_arrow_function_length_descriptor() {
 #[test]
 fn test_member_chain_simple() {
     // Simple member chain: Array.prototype
-    assert_eq!(
-        eval("typeof Array.prototype"),
-        JsValue::from("object")
-    );
+    assert_eq!(eval("typeof Array.prototype"), JsValue::from("object"));
 }
 
 #[test]
@@ -1700,10 +1694,12 @@ fn test_call_bind_result() {
 fn test_call_bind_assign_and_use() {
     // Assign bound function and check its type
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             var __push = Function.prototype.call.bind(Array.prototype.push);
             typeof __push
-        "#),
+        "#
+        ),
         JsValue::from("function")
     );
 }
@@ -1712,12 +1708,14 @@ fn test_call_bind_assign_and_use() {
 fn test_call_bind_invoke_simple() {
     // Test invoking a simple bound function
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             var arr = [1, 2];
             var bound = Array.prototype.push.bind(arr);
             bound(3);
             arr.length
-        "#),
+        "#
+        ),
         JsValue::Number(3.0)
     );
 }
@@ -1730,10 +1728,7 @@ fn test_call_bind_invoke_simple() {
 fn test_call_bind_debug_chain() {
     // Debug: test each step of the chain
     // Function.prototype is actually typeof "function" in JS (it's the only prototype that's callable)
-    assert_eq!(
-        eval("typeof Function.prototype"),
-        JsValue::from("function")
-    );
+    assert_eq!(eval("typeof Function.prototype"), JsValue::from("function"));
     assert_eq!(
         eval("typeof Function.prototype.call"),
         JsValue::from("function")

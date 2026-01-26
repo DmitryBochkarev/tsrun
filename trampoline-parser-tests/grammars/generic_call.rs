@@ -189,7 +189,7 @@ pub fn auto_memoized_grammar() -> CompiledGrammar {
             r.sequence((r.capture(r.one_or_more(r.alpha())), r.parse("ws")))
         })
         .rule("ws", |r| r.skip(r.zero_or_more(r.ws())))
-        .build_with_memoization()  // Uses automatic memoization detection
+        .build_with_memoization() // Uses automatic memoization detection
 }
 
 /// Grammar with memoization applied to fix the exponential backtracking.
@@ -306,7 +306,9 @@ mod tests {
                     r.lit(">"),
                 ))
             })
-            .rule("type", |r| r.choice((r.parse("type_reference"), r.parse("identifier"))))
+            .rule("type", |r| {
+                r.choice((r.parse("type_reference"), r.parse("identifier")))
+            })
             .rule("type_reference", |r| {
                 r.sequence((r.parse("identifier"), r.optional(r.parse("type_arguments"))))
             })

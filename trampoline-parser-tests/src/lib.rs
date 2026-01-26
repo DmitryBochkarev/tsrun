@@ -169,7 +169,10 @@ pub mod generic_call_memoized_parser {
 
 #[allow(dead_code, unused_variables, clippy::all)]
 pub mod generic_call_auto_memoized_parser {
-    include!(concat!(env!("OUT_DIR"), "/generic_call_auto_memoized_parser.rs"));
+    include!(concat!(
+        env!("OUT_DIR"),
+        "/generic_call_auto_memoized_parser.rs"
+    ));
 }
 
 #[allow(dead_code, unused_variables, clippy::all)]

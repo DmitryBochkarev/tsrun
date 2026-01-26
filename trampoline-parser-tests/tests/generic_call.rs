@@ -6,10 +6,10 @@
 //!
 //! This test documents the issue for future fixes in the trampoline-parser.
 
+use trampoline_parser_tests::generic_call_auto_memoized_parser as auto_memoized;
 use trampoline_parser_tests::generic_call_bad_parser as bad;
 use trampoline_parser_tests::generic_call_good_parser as good;
 use trampoline_parser_tests::generic_call_memoized_parser as memoized;
-use trampoline_parser_tests::generic_call_auto_memoized_parser as auto_memoized;
 
 /// Tests that simple generic calls work correctly.
 #[test]
@@ -202,7 +202,10 @@ fn test_auto_memoized_grammar_fast() {
 fn test_auto_memoized_simple_generic_call() {
     let mut parser = auto_memoized::Parser::new("identity<number>(x)");
     let result = parser.parse();
-    assert!(result.is_ok(), "Auto-memoized grammar should parse generic call");
+    assert!(
+        result.is_ok(),
+        "Auto-memoized grammar should parse generic call"
+    );
 }
 
 /// Verifies auto-memoized grammar correctly parses comparisons.
@@ -210,5 +213,8 @@ fn test_auto_memoized_simple_generic_call() {
 fn test_auto_memoized_comparison() {
     let mut parser = auto_memoized::Parser::new("a < b");
     let result = parser.parse();
-    assert!(result.is_ok(), "Auto-memoized grammar should parse comparison");
+    assert!(
+        result.is_ok(),
+        "Auto-memoized grammar should parse comparison"
+    );
 }

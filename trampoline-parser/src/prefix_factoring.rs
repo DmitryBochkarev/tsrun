@@ -794,11 +794,7 @@ pub fn identify_memoization_candidates(rules: &[RuleDef]) -> HashSet<String> {
     let mut candidates = HashSet::new();
 
     for rule in rules {
-        find_memoization_candidates_in_combinator(
-            &rule.combinator,
-            &rule_map,
-            &mut candidates,
-        );
+        find_memoization_candidates_in_combinator(&rule.combinator, &rule_map, &mut candidates);
     }
 
     candidates
@@ -909,7 +905,10 @@ fn find_overlapping_rule_starts(
 }
 
 /// Get the first rule reference at the start of a combinator.
-fn get_first_rule<'a>(comb: &'a Combinator, rule_map: &HashMap<&str, &'a Combinator>) -> Option<&'a str> {
+fn get_first_rule<'a>(
+    comb: &'a Combinator,
+    rule_map: &HashMap<&str, &'a Combinator>,
+) -> Option<&'a str> {
     match comb {
         Combinator::Rule(name) => Some(name.as_str()),
         Combinator::Sequence(items) if !items.is_empty() => get_first_rule(&items[0], rule_map),

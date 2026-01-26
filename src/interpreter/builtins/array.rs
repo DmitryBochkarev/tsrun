@@ -79,7 +79,9 @@ fn get_array_like_element(obj: &Gc<JsObject>, index: u32) -> JsValue {
     }
     // Fall back to string key (e.g., "0", "1", "2")
     let string_key = PropertyKey::String(JsString::from(index.to_string()));
-    borrowed.get_property(&string_key).unwrap_or(JsValue::Undefined)
+    borrowed
+        .get_property(&string_key)
+        .unwrap_or(JsValue::Undefined)
 }
 
 /// Check if an array-like object has an element at the given index.

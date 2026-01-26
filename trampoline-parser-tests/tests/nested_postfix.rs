@@ -46,7 +46,10 @@ fn test_object_with_simple_value() {
     let result2 = parser2.parse();
     println!("Result for {{ a: 1 }}: {:?}", result2);
 
-    assert!(result.is_ok() || result2.is_ok(), "Should parse object with simple value");
+    assert!(
+        result.is_ok() || result2.is_ok(),
+        "Should parse object with simple value"
+    );
 }
 
 #[test]
@@ -72,7 +75,11 @@ fn test_object_with_member_value() {
     // This is the critical test - member access inside object literal
     let mut parser = nested_postfix_parser::Parser::new("{ a: x.y }");
     let result = parser.parse();
-    assert!(result.is_ok(), "Should parse object with member value: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should parse object with member value: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -87,7 +94,11 @@ fn test_parens_object_with_member() {
     // This reproduces the TypeScript bug
     let mut parser = nested_postfix_parser::Parser::new("({ a: x.y })");
     let result = parser.parse();
-    assert!(result.is_ok(), "Should parse ({{ a: x.y }}): {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should parse ({{ a: x.y }}): {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -102,14 +113,22 @@ fn test_assignment_to_object_with_member() {
     // Another failing case in TypeScript
     let mut parser = nested_postfix_parser::Parser::new("o = { a: x.y }");
     let result = parser.parse();
-    assert!(result.is_ok(), "Should parse o = {{ a: x.y }}: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should parse o = {{ a: x.y }}: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_object_with_call_value() {
     let mut parser = nested_postfix_parser::Parser::new("{ a: f() }");
     let result = parser.parse();
-    assert!(result.is_ok(), "Should parse object with call value: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should parse object with call value: {:?}",
+        result.err()
+    );
 }
 
 // =============================================================================
@@ -120,5 +139,9 @@ fn test_object_with_call_value() {
 fn test_deeply_nested() {
     let mut parser = nested_postfix_parser::Parser::new("({ a: { b: x.y } })");
     let result = parser.parse();
-    assert!(result.is_ok(), "Should parse deeply nested: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should parse deeply nested: {:?}",
+        result.err()
+    );
 }

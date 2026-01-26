@@ -574,9 +574,15 @@ fn test_spread_in_new_mixed_args() {
 #[test]
 fn test_property_access_with_operators() {
     // obj.b * 10 + obj.c should be (obj.b * 10) + obj.c, not obj.b * (10 + obj.c)
-    assert_eq!(eval("const obj = { b: 2, c: 3 }; obj.b * 10 + obj.c"), JsValue::Number(23.0));
+    assert_eq!(
+        eval("const obj = { b: 2, c: 3 }; obj.b * 10 + obj.c"),
+        JsValue::Number(23.0)
+    );
     // More complex case
-    assert_eq!(eval("const obj = { a: 1, b: 2, c: 3 }; obj.a * 100 + obj.b * 10 + obj.c"), JsValue::Number(123.0));
+    assert_eq!(
+        eval("const obj = { a: 1, b: 2, c: 3 }; obj.a * 100 + obj.b * 10 + obj.c"),
+        JsValue::Number(123.0)
+    );
 }
 
 // Test spread in new with multiple spreads

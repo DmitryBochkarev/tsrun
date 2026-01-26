@@ -1,7 +1,7 @@
 // Tests for async/await implementation
 
 use super::{eval, run_to_completion};
-use tsrun::{create_eval_internal_module, InternalModule, Interpreter, InterpreterConfig, JsValue};
+use tsrun::{InternalModule, Interpreter, InterpreterConfig, JsValue, create_eval_internal_module};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Async function declaration

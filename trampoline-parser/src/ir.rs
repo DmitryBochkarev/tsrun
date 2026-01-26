@@ -104,7 +104,20 @@ impl CharClass {
             CharClass::Alpha => c.is_ascii_alphabetic(),
             CharClass::AlphaNumeric => c.is_ascii_alphanumeric(),
             // ECMAScript whitespace: space, tab, vertical tab, form feed, NBSP, BOM, line terminators
-            CharClass::Whitespace => matches!(c, ' ' | '\t' | '\x0B' | '\x0C' | '\r' | '\n' | '\u{00A0}' | '\u{FEFF}' | '\u{2028}' | '\u{2029}') || c.is_whitespace(),
+            CharClass::Whitespace => {
+                matches!(
+                    c,
+                    ' ' | '\t'
+                        | '\x0B'
+                        | '\x0C'
+                        | '\r'
+                        | '\n'
+                        | '\u{00A0}'
+                        | '\u{FEFF}'
+                        | '\u{2028}'
+                        | '\u{2029}'
+                ) || c.is_whitespace()
+            }
             CharClass::IdentStart => c.is_ascii_alphabetic() || c == '_' || c == '$',
             CharClass::IdentCont => c.is_ascii_alphanumeric() || c == '_' || c == '$',
         }

@@ -111,7 +111,6 @@ fn test_namespace_class_typeof() {
     );
 }
 
-
 #[test]
 fn test_namespace_class_inside() {
     // Test instantiation inside the namespace

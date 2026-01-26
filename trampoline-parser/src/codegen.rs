@@ -54,7 +54,10 @@ impl<'a> CodeGenerator<'a> {
             .unwrap_or("String");
         // Helper function to decode unicode escapes in identifiers
         self.line("/// Decode unicode escape sequences in identifier text");
-        self.line(&format!("fn decode_identifier_escapes(text: &{}) -> {} {{", string_type, string_type));
+        self.line(&format!(
+            "fn decode_identifier_escapes(text: &{}) -> {} {{",
+            string_type, string_type
+        ));
         self.indent += 1;
         // For String type, use as_str(); for custom types use as_ref()
         if string_type == "String" {
@@ -461,7 +464,11 @@ impl<'a> CodeGenerator<'a> {
                     self.line(&format!("{}AfterPostfixIndex {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                     self.line(&format!("{}AfterPostfixMember {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                     // Only define AfterPostfixRule if there are Rule-type postfix ops
-                    if pratt.postfix_ops.iter().any(|op| matches!(op, crate::ir::PostfixOp::Rule { .. })) {
+                    if pratt
+                        .postfix_ops
+                        .iter()
+                        .any(|op| matches!(op, crate::ir::PostfixOp::Rule { .. }))
+                    {
                         self.line(&format!("{}AfterPostfixRule {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                     }
                 }
@@ -530,7 +537,9 @@ impl<'a> CodeGenerator<'a> {
         self.line("last_error: Option<ParseError>,");
         // Memoization table: (memo_id, position) -> Option<(result, end_pos, end_line, end_column)>
         // None in the Option means parsing failed at that position
-        self.line("memo: hashbrown::HashMap<(usize, usize), Option<(ParseResult, usize, u32, u32)>>,");
+        self.line(
+            "memo: hashbrown::HashMap<(usize, usize), Option<(ParseResult, usize, u32, u32)>>,",
+        );
         if has_string_dict {
             self.line(&format!("string_dict: &'a mut {},", string_dict_type));
         }
@@ -1661,8 +1670,12 @@ impl<'a> CodeGenerator<'a> {
                         self.indent += 1;
 
                         // Find the leading rule name (assume all use the same one, typically "ws")
-                        let leading_rule_name = pratt.prefix_ops.iter()
-                            .find_map(|op| extract_operator_pattern_full(op.pattern.as_ref()).leading_rule)
+                        let leading_rule_name = pratt
+                            .prefix_ops
+                            .iter()
+                            .find_map(|op| {
+                                extract_operator_pattern_full(op.pattern.as_ref()).leading_rule
+                            })
                             .unwrap_or_else(|| "ws".to_string());
                         let rule_prefix = to_pascal_case(&leading_rule_name);
 
@@ -2228,7 +2241,11 @@ impl<'a> CodeGenerator<'a> {
                                 self.line("} else {");
                                 self.indent += 1;
                                 // Use the MAXIMUM precedence among all complex ops for the gate condition
-                                let max_prec = complex_ops.iter().map(|(_, op, _)| op.precedence).max().unwrap_or(0);
+                                let max_prec = complex_ops
+                                    .iter()
+                                    .map(|(_, op, _)| op.precedence)
+                                    .max()
+                                    .unwrap_or(0);
                                 self.line("// Try first complex infix operator (others will be chained if this fails)");
                                 let first_op = &complex_ops[0];
                                 let next_prec = if first_op.1.assoc == crate::Assoc::Right {
@@ -2255,7 +2272,11 @@ impl<'a> CodeGenerator<'a> {
                         // No ternary, just complex infix ops
                         // Use the MAXIMUM precedence among all complex ops for the gate condition
                         // This ensures we try the chain if ANY complex op could potentially match
-                        let max_prec = complex_ops.iter().map(|(_, op, _)| op.precedence).max().unwrap_or(0);
+                        let max_prec = complex_ops
+                            .iter()
+                            .map(|(_, op, _)| op.precedence)
+                            .max()
+                            .unwrap_or(0);
                         self.line("// Try first complex infix operator (others will be chained if this fails)");
                         let first_op = &complex_ops[0];
                         let next_prec = if first_op.1.assoc == crate::Assoc::Right {
@@ -2560,10 +2581,7 @@ impl<'a> CodeGenerator<'a> {
                         // Check if this operator's precedence is high enough
                         // This is critical: we matched the literal, but we must check if this
                         // specific operator's precedence allows it to bind at this level
-                        self.line(&format!(
-                            "if {} >= min_prec {{",
-                            op_precedence
-                        ));
+                        self.line(&format!("if {} >= min_prec {{", op_precedence));
                         self.indent += 1;
 
                         // Success - proceed with parsing right operand
@@ -2724,7 +2742,9 @@ impl<'a> CodeGenerator<'a> {
                     ));
                     self.indent += 1;
                     // Skip trailing whitespace after close delimiter (for ASI contexts)
-                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {");
+                    self.line(
+                        "while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {",
+                    );
                     self.indent += 1;
                     self.line("self.advance();");
                     self.indent -= 1;
@@ -2808,7 +2828,9 @@ impl<'a> CodeGenerator<'a> {
                     ));
                     self.indent += 1;
                     // Skip trailing whitespace after close delimiter (for ASI contexts)
-                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {");
+                    self.line(
+                        "while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {",
+                    );
                     self.indent += 1;
                     self.line("self.advance();");
                     self.indent -= 1;
@@ -2900,7 +2922,9 @@ impl<'a> CodeGenerator<'a> {
                     self.indent -= 1;
                     self.line("}");
                     // Skip trailing whitespace after close delimiter (for ASI contexts)
-                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {");
+                    self.line(
+                        "while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {",
+                    );
                     self.indent += 1;
                     self.line("self.advance();");
                     self.indent -= 1;
@@ -3004,7 +3028,9 @@ impl<'a> CodeGenerator<'a> {
                     // Decode unicode escapes in the property name
                     self.line("let prop_name = decode_identifier_escapes(&raw_prop_name);");
                     // Skip trailing whitespace (like the identifier rule does)
-                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {");
+                    self.line(
+                        "while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {",
+                    );
                     self.indent += 1;
                     self.line("self.advance();");
                     self.indent -= 1;
@@ -3047,7 +3073,11 @@ impl<'a> CodeGenerator<'a> {
                 }
 
                 // AfterPostfixRule - apply mapping with parsed rule result
-                if pratt.postfix_ops.iter().any(|op| matches!(op, crate::ir::PostfixOp::Rule { .. })) {
+                if pratt
+                    .postfix_ops
+                    .iter()
+                    .any(|op| matches!(op, crate::ir::PostfixOp::Rule { .. }))
+                {
                     self.line(&format!(
                         "Work::{}AfterPostfixRule {{ result_base, min_prec, op_idx, start_pos, start_line, start_column }} => {{",
                         prefix
@@ -3055,7 +3085,9 @@ impl<'a> CodeGenerator<'a> {
                     self.indent += 1;
                     self.line("if self.last_error.is_some() { return Ok(()); }");
                     self.line("// Pop the rule result and the tag expression");
-                    self.line("let rule_result = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line(
+                        "let rule_result = self.result_stack.pop().unwrap_or(ParseResult::None);",
+                    );
                     self.line("let tag = self.result_stack.pop().unwrap_or(ParseResult::None);");
                     self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
                     self.line("match op_idx {");
@@ -3154,10 +3186,7 @@ impl<'a> CodeGenerator<'a> {
                 let inner_prefix = format!("{}Memo", prefix);
 
                 // Start handler - check memo, if cached return it, else push Complete and inner Start
-                self.line(&format!(
-                    "Work::{}Start {{ result_base }} => {{",
-                    prefix
-                ));
+                self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
                 self.line(&format!("let memo_id = {};", id));
                 self.line("let start_pos = self.pos;");
@@ -3212,8 +3241,12 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("} else {");
                 self.indent += 1;
-                self.line("let result = self.result_stack.last().cloned().unwrap_or(ParseResult::None);");
-                self.line("self.memo.insert(key, Some((result, self.pos, self.line, self.column)));");
+                self.line(
+                    "let result = self.result_stack.last().cloned().unwrap_or(ParseResult::None);",
+                );
+                self.line(
+                    "self.memo.insert(key, Some((result, self.pos, self.line, self.column)));",
+                );
                 self.indent -= 1;
                 self.line("}");
                 self.indent -= 1;

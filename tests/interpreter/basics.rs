@@ -1149,7 +1149,10 @@ fn test_closure_object_method() {
 #[test]
 fn test_simple_closure() {
     // Simplest possible closure test
-    assert_eq!(eval("let x = 1; let f = () => x; f()"), JsValue::Number(1.0));
+    assert_eq!(
+        eval("let x = 1; let f = () => x; f()"),
+        JsValue::Number(1.0)
+    );
 }
 
 #[test]
@@ -1184,4 +1187,3 @@ fn test_default_param_recursion() {
         JsValue::Number(6.0) // 3+2+1 = 6
     );
 }
-
