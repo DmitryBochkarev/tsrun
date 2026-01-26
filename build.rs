@@ -68,7 +68,7 @@ impl<'a> Parser<'a> {
 
         // Check that all input was consumed
         if self.pos < self.input.len() {
-            let remaining = &self.input[self.pos..];
+            let remaining = self.input.get(self.pos..).unwrap_or("");
             let preview: String = remaining.chars().take(20).collect();
             return Err(ParseError {
                 message: format!("Unexpected input: '{}'", preview),

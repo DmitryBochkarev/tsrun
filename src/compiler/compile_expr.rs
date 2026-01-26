@@ -1286,19 +1286,19 @@ impl Compiler {
 
         // If the object is a Call expression that contains an optional chain,
         // use the optional chain path (e.g., a?.b.c().d)
-        if let Expression::Call(call) = member.object.as_ref() {
-            if Self::call_contains_optional_chain(call) {
-                let short_circuit_jumps = self.compile_member_expression_optional(member, dst)?;
-                if !short_circuit_jumps.is_empty() {
-                    let skip_undefined = self.builder.emit_jump();
-                    for jump in short_circuit_jumps {
-                        self.builder.patch_jump(jump);
-                    }
-                    self.builder.emit(Op::LoadUndefined { dst });
-                    self.builder.patch_jump(skip_undefined);
+        if let Expression::Call(call) = member.object.as_ref()
+            && Self::call_contains_optional_chain(call)
+        {
+            let short_circuit_jumps = self.compile_member_expression_optional(member, dst)?;
+            if !short_circuit_jumps.is_empty() {
+                let skip_undefined = self.builder.emit_jump();
+                for jump in short_circuit_jumps {
+                    self.builder.patch_jump(jump);
                 }
-                return Ok(());
+                self.builder.emit(Op::LoadUndefined { dst });
+                self.builder.patch_jump(skip_undefined);
             }
+            return Ok(());
         }
 
         // Compile object
@@ -1503,92 +1503,92 @@ impl Compiler {
 
         // Check if this is an optional chain method call (a?.b())
         // AST structure: Call { callee: OptionalChain { base: Member { object, property } } }
-        if let Expression::OptionalChain(opt_chain) = call.callee.as_ref() {
-            if let Expression::Member(member) = opt_chain.base.as_ref() {
-                // Compile the object
-                let obj_reg = self.builder.alloc_register()?;
+        if let Expression::OptionalChain(opt_chain) = call.callee.as_ref()
+            && let Expression::Member(member) = opt_chain.base.as_ref()
+        {
+            // Compile the object
+            let obj_reg = self.builder.alloc_register()?;
 
-                // Recursively handle nested optional chains in the object
-                let inner_jumps = match member.object.as_ref() {
-                    Expression::Member(inner_member) => {
-                        self.compile_member_expression_optional(inner_member, obj_reg)?
-                    }
-                    Expression::Call(inner_call) => {
-                        self.compile_call_expression_optional(inner_call, obj_reg)?
-                    }
-                    Expression::OptionalChain(inner_opt) => {
-                        self.compile_optional_chain_inner(&inner_opt.base, obj_reg)?
-                    }
-                    _ => {
-                        self.compile_expression(&member.object, obj_reg)?;
-                        Vec::new()
-                    }
-                };
-                short_circuit_jumps.extend(inner_jumps);
-
-                // If member access is optional (?.), check for null/undefined
-                if member.optional {
-                    let jump = self.builder.emit_jump_if_nullish(obj_reg);
-                    short_circuit_jumps.push(jump);
+            // Recursively handle nested optional chains in the object
+            let inner_jumps = match member.object.as_ref() {
+                Expression::Member(inner_member) => {
+                    self.compile_member_expression_optional(inner_member, obj_reg)?
                 }
-
-                // Get the method
-                let method_reg = self.builder.alloc_register()?;
-                match &member.property {
-                    MemberProperty::Identifier(id) => {
-                        let key_idx = self.builder.add_string(id.name.cheap_clone())?;
-                        self.builder.emit(Op::GetPropertyConst {
-                            dst: method_reg,
-                            obj: obj_reg,
-                            key: key_idx,
-                        });
-                    }
-                    MemberProperty::Expression(expr) => {
-                        let key_reg = self.builder.alloc_register()?;
-                        self.compile_expression(expr, key_reg)?;
-                        self.builder.emit(Op::GetProperty {
-                            dst: method_reg,
-                            obj: obj_reg,
-                            key: key_reg,
-                        });
-                        self.builder.free_register(key_reg);
-                    }
-                    MemberProperty::PrivateIdentifier(id) => {
-                        let (class_brand, _info) =
-                            self.lookup_private_member(&id.name).ok_or_else(|| {
-                                JsError::syntax_error_simple(format!(
-                                    "Private field '{}' must be declared in an enclosing class",
-                                    id.name
-                                ))
-                            })?;
-
-                        let field_name_idx = self.builder.add_string(id.name.cheap_clone())?;
-                        self.builder.emit(Op::GetPrivateField {
-                            dst: method_reg,
-                            obj: obj_reg,
-                            class_brand,
-                            field_name: field_name_idx,
-                        });
-                    }
+                Expression::Call(inner_call) => {
+                    self.compile_call_expression_optional(inner_call, obj_reg)?
                 }
-
-                // If call is optional (?.()), check if method is callable
-                if call.optional {
-                    let jump = self.builder.emit_jump_if_nullish(method_reg);
-                    short_circuit_jumps.push(jump);
+                Expression::OptionalChain(inner_opt) => {
+                    self.compile_optional_chain_inner(&inner_opt.base, obj_reg)?
                 }
+                _ => {
+                    self.compile_expression(&member.object, obj_reg)?;
+                    Vec::new()
+                }
+            };
+            short_circuit_jumps.extend(inner_jumps);
 
-                // Compile arguments
-                let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
-
-                // Call the method with obj as this
-                self.emit_call(dst, method_reg, obj_reg, args_start, argc, has_spread);
-
-                self.builder.free_register(method_reg);
-                self.builder.free_register(obj_reg);
-
-                return Ok(short_circuit_jumps);
+            // If member access is optional (?.), check for null/undefined
+            if member.optional {
+                let jump = self.builder.emit_jump_if_nullish(obj_reg);
+                short_circuit_jumps.push(jump);
             }
+
+            // Get the method
+            let method_reg = self.builder.alloc_register()?;
+            match &member.property {
+                MemberProperty::Identifier(id) => {
+                    let key_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetPropertyConst {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        key: key_idx,
+                    });
+                }
+                MemberProperty::Expression(expr) => {
+                    let key_reg = self.builder.alloc_register()?;
+                    self.compile_expression(expr, key_reg)?;
+                    self.builder.emit(Op::GetProperty {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        key: key_reg,
+                    });
+                    self.builder.free_register(key_reg);
+                }
+                MemberProperty::PrivateIdentifier(id) => {
+                    let (class_brand, _info) =
+                        self.lookup_private_member(&id.name).ok_or_else(|| {
+                            JsError::syntax_error_simple(format!(
+                                "Private field '{}' must be declared in an enclosing class",
+                                id.name
+                            ))
+                        })?;
+
+                    let field_name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetPrivateField {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        class_brand,
+                        field_name: field_name_idx,
+                    });
+                }
+            }
+
+            // If call is optional (?.()), check if method is callable
+            if call.optional {
+                let jump = self.builder.emit_jump_if_nullish(method_reg);
+                short_circuit_jumps.push(jump);
+            }
+
+            // Compile arguments
+            let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
+
+            // Call the method with obj as this
+            self.emit_call(dst, method_reg, obj_reg, args_start, argc, has_spread);
+
+            self.builder.free_register(method_reg);
+            self.builder.free_register(obj_reg);
+
+            return Ok(short_circuit_jumps);
         }
 
         // Check if this is a method call (obj.method() or obj?.method())
@@ -1967,19 +1967,19 @@ impl Compiler {
         }
 
         // If the callee is a member and its object is an OptionalChain, use optional path
-        if let Expression::Member(member) = call.callee.as_ref() {
-            if matches!(member.object.as_ref(), Expression::OptionalChain(_)) {
-                let short_circuit_jumps = self.compile_call_expression_optional(call, dst)?;
-                if !short_circuit_jumps.is_empty() {
-                    let skip_undefined = self.builder.emit_jump();
-                    for jump in short_circuit_jumps {
-                        self.builder.patch_jump(jump);
-                    }
-                    self.builder.emit(Op::LoadUndefined { dst });
-                    self.builder.patch_jump(skip_undefined);
+        if let Expression::Member(member) = call.callee.as_ref()
+            && matches!(member.object.as_ref(), Expression::OptionalChain(_))
+        {
+            let short_circuit_jumps = self.compile_call_expression_optional(call, dst)?;
+            if !short_circuit_jumps.is_empty() {
+                let skip_undefined = self.builder.emit_jump();
+                for jump in short_circuit_jumps {
+                    self.builder.patch_jump(jump);
                 }
-                return Ok(());
+                self.builder.emit(Op::LoadUndefined { dst });
+                self.builder.patch_jump(skip_undefined);
             }
+            return Ok(());
         }
 
         // Check for method call pattern: obj.method(args) or obj[expr](args)

@@ -618,7 +618,7 @@ impl<'a> CodeGenerator<'a> {
         // Current char
         self.line("fn current_char(&self) -> Option<char> {");
         self.indent += 1;
-        self.line("self.input[self.pos..].chars().next()");
+        self.line("self.input.get(self.pos..).and_then(|s| s.chars().next())");
         self.indent -= 1;
         self.line("}");
         self.blank();
@@ -648,7 +648,7 @@ impl<'a> CodeGenerator<'a> {
         // Match literal with line tracking
         self.line("fn match_literal(&mut self, lit: &str) -> bool {");
         self.indent += 1;
-        self.line("if self.input[self.pos..].starts_with(lit) {");
+        self.line("if self.input.get(self.pos..).is_some_and(|s| s.starts_with(lit)) {");
         self.indent += 1;
         self.line("for c in lit.chars() {");
         self.indent += 1;
@@ -726,10 +726,13 @@ impl<'a> CodeGenerator<'a> {
         ));
         self.indent += 1;
         if string_type == "String" {
-            self.line("self.input[start..end].to_string()");
+            self.line("self.input.get(start..end).unwrap_or(\"\").to_string()");
         } else {
             // For custom string types like JsString, assume From<&str>
-            self.line(&format!("{}::from(&self.input[start..end])", string_type));
+            self.line(&format!(
+                "{}::from(self.input.get(start..end).unwrap_or(\"\"))",
+                string_type
+            ));
         }
         self.indent -= 1;
         self.line("}");
@@ -753,7 +756,9 @@ impl<'a> CodeGenerator<'a> {
         // Try to consume a literal (for Pratt parsing)
         self.line("fn try_consume(&mut self, s: &str) -> bool {");
         self.indent += 1;
-        self.line("if self.input[self.pos..].starts_with(s) {");
+        self.line(
+            "if self.input.get(self.pos..).is_some_and(|remaining| remaining.starts_with(s)) {",
+        );
         self.indent += 1;
         self.line("for c in s.chars() {");
         self.indent += 1;

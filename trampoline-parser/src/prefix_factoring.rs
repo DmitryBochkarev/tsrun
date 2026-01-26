@@ -907,16 +907,16 @@ fn find_overlapping_rule_starts(
 /// Get the first rule reference at the start of a combinator.
 fn get_first_rule<'a>(
     comb: &'a Combinator,
-    rule_map: &HashMap<&str, &'a Combinator>,
+    _rule_map: &HashMap<&str, &'a Combinator>,
 ) -> Option<&'a str> {
     match comb {
         Combinator::Rule(name) => Some(name.as_str()),
-        Combinator::Sequence(items) if !items.is_empty() => get_first_rule(&items[0], rule_map),
-        Combinator::Optional(inner) => get_first_rule(inner, rule_map),
-        Combinator::Skip(inner) => get_first_rule(inner, rule_map),
-        Combinator::Capture(inner) => get_first_rule(inner, rule_map),
-        Combinator::Mapped { inner, .. } => get_first_rule(inner, rule_map),
-        Combinator::Memoize { inner, .. } => get_first_rule(inner, rule_map),
+        Combinator::Sequence(items) if !items.is_empty() => get_first_rule(&items[0], _rule_map),
+        Combinator::Optional(inner) => get_first_rule(inner, _rule_map),
+        Combinator::Skip(inner) => get_first_rule(inner, _rule_map),
+        Combinator::Capture(inner) => get_first_rule(inner, _rule_map),
+        Combinator::Mapped { inner, .. } => get_first_rule(inner, _rule_map),
+        Combinator::Memoize { inner, .. } => get_first_rule(inner, _rule_map),
         _ => None,
     }
 }

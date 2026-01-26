@@ -208,17 +208,17 @@ fn parse_number(text: &JsString) -> f64 {
     // Handle hex, binary, octal
     if s.starts_with("0x") || s.starts_with("0X") {
         // Strip 'n' suffix from the hex part too if present after prefix removal
-        let hex_part = &s[2..];
+        let hex_part = s.get(2..).unwrap_or("");
         let hex_part = hex_part.strip_suffix('n').unwrap_or(hex_part);
         // Remove underscores from hex digits
         let cleaned: String = hex_part.chars().filter(|c| *c != '_').collect();
         i64::from_str_radix(&cleaned, 16).map(|n| n as f64).unwrap_or(f64::NAN)
     } else if s.starts_with("0b") || s.starts_with("0B") {
-        let bin_part = &s[2..];
+        let bin_part = s.get(2..).unwrap_or("");
         let cleaned: String = bin_part.chars().filter(|c| *c != '_').collect();
         i64::from_str_radix(&cleaned, 2).map(|n| n as f64).unwrap_or(f64::NAN)
     } else if s.starts_with("0o") || s.starts_with("0O") {
-        let oct_part = &s[2..];
+        let oct_part = s.get(2..).unwrap_or("");
         let cleaned: String = oct_part.chars().filter(|c| *c != '_').collect();
         i64::from_str_radix(&cleaned, 8).map(|n| n as f64).unwrap_or(f64::NAN)
     } else {
@@ -235,7 +235,7 @@ fn parse_string_literal(text: &JsString) -> Result<JsString, String> {
     if s.len() < 2 {
         return Ok(JsString::from(""));
     }
-    let inner = &s[1..s.len() - 1];
+    let inner = s.get(1..s.len() - 1).unwrap_or("");
 
     // Handle escape sequences
     let mut result = String::with_capacity(inner.len());
@@ -445,9 +445,9 @@ fn parse_regexp_literal(text: &JsString) -> (String, String) {
     let mut i = 1;
     let bytes = s.as_bytes();
     while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+        if bytes.get(i) == Some(&b'\\') && i + 1 < bytes.len() {
             i += 2; // Skip escaped char
-        } else if bytes[i] == b'/' {
+        } else if bytes.get(i) == Some(&b'/') {
             break;
         } else {
             i += 1;
@@ -456,8 +456,8 @@ fn parse_regexp_literal(text: &JsString) -> (String, String) {
     if i >= bytes.len() {
         return (String::new(), String::new());
     }
-    let pattern = s[1..i].to_string();
-    let flags = s[i + 1..].to_string();
+    let pattern = s.get(1..i).unwrap_or("").to_string();
+    let flags = s.get(i + 1..).unwrap_or("").to_string();
     (pattern, flags)
 }
 
@@ -5187,7 +5187,7 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
             let text_str = text.as_ref();
             // Remove backticks from both ends and decode escapes
             let content: JsString = if text_str.starts_with('`') && text_str.ends_with('`') && text_str.len() >= 2 {
-                decode_escape_sequences(&text_str[1..text_str.len()-1])
+                decode_escape_sequences(text_str.get(1..text_str.len()-1).unwrap_or(\"\"))
                     .map_err(|e| ParseError::new(e, 0, 0))?
             } else {
                 text
@@ -5217,7 +5217,7 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
             // Parse head: `xxx${  ->  xxx (and decode escapes)
             let head_str = head_text.as_ref();
             let head_content: JsString = if head_str.starts_with('`') && head_str.ends_with(\"${\") && head_str.len() >= 3 {
-                decode_escape_sequences(&head_str[1..head_str.len()-2])
+                decode_escape_sequences(head_str.get(1..head_str.len()-2).unwrap_or(\"\"))
                     .map_err(|e| ParseError::new(e, 0, 0))?
             } else {
                 head_text
@@ -5240,7 +5240,7 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
                         // Parse middle: }xxx${  ->  xxx (and decode escapes)
                         let middle_str = middle_text.as_ref();
                         let middle_content: JsString = if middle_str.starts_with('}') && middle_str.ends_with(\"${\") && middle_str.len() >= 3 {
-                            decode_escape_sequences(&middle_str[1..middle_str.len()-2])
+                            decode_escape_sequences(middle_str.get(1..middle_str.len()-2).unwrap_or(\"\"))
                                 .map_err(|e| ParseError::new(e, 0, 0))?
                         } else {
                             middle_text
@@ -5258,7 +5258,7 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
             // Parse tail: }xxx`  ->  xxx (and decode escapes)
             let tail_str = tail_text.as_ref();
             let tail_content: JsString = if tail_str.starts_with('}') && tail_str.ends_with('`') && tail_str.len() >= 2 {
-                decode_escape_sequences(&tail_str[1..tail_str.len()-1])
+                decode_escape_sequences(tail_str.get(1..tail_str.len()-1).unwrap_or(\"\"))
                     .map_err(|e| ParseError::new(e, 0, 0))?
             } else {
                 tail_text
