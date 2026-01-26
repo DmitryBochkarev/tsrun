@@ -589,10 +589,12 @@ impl Compiler {
 
                 self.builder.free_register(obj_reg);
             }
-            Expression::Identifier(_) => {
-                // delete identifier - in strict mode this is an error
-                // For now, just return true (non-strict behavior)
-                self.builder.emit(Op::LoadBool { dst, value: true });
+            Expression::Identifier(id) => {
+                // delete identifier - in strict mode this is a SyntaxError
+                return Err(JsError::syntax_error_simple(format!(
+                    "Delete of an unqualified identifier '{}' in strict mode",
+                    id.name
+                )));
             }
             _ => {
                 // delete on non-reference always returns true
