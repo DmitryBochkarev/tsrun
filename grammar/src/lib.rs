@@ -318,7 +318,8 @@ fn parse_string_literal(text: &JsString) -> JsString {
 }
 
 /// Decode escape sequences in a string (shared by string literals and templates)
-fn decode_escape_sequences(inner: &str) -> JsString {
+/// Returns an error for invalid escape sequences in template literals
+fn decode_escape_sequences(inner: &str) -> Result<JsString, String> {
     let mut result = String::with_capacity(inner.len());
     let mut chars = inner.chars().peekable();
 
@@ -342,7 +343,13 @@ fn decode_escape_sequences(inner: &str) -> JsString {
                     let mut hex = String::new();
                     for _ in 0..2 {
                         if let Some(h) = chars.next() {
-                            hex.push(h);
+                            if h.is_ascii_hexdigit() {
+                                hex.push(h);
+                            } else {
+                                return Err(format!("Invalid hex escape sequence: \\x{}{}", hex, h));
+                            }
+                        } else {
+                            return Err("Invalid hex escape sequence: incomplete \\x".to_string());
                         }
                     }
                     if let Ok(code) = u32::from_str_radix(&hex, 16) {
@@ -361,18 +368,33 @@ fn decode_escape_sequences(inner: &str) -> JsString {
                                 break;
                             }
                             chars.next();
-                            hex.push(h);
+                            if h.is_ascii_hexdigit() {
+                                hex.push(h);
+                            } else {
+                                return Err(format!("Invalid unicode escape sequence: \\u{{{}{}", hex, h));
+                            }
+                        }
+                        if hex.is_empty() {
+                            return Err("Invalid unicode escape sequence: empty \\u{}".to_string());
                         }
                         if let Ok(code) = u32::from_str_radix(&hex, 16) {
                             if let Some(ch) = char::from_u32(code) {
                                 result.push(ch);
+                            } else {
+                                return Err(format!("Invalid unicode code point: \\u{{{}}}", hex));
                             }
                         }
                     } else {
                         let mut hex = String::new();
                         for _ in 0..4 {
                             if let Some(h) = chars.next() {
-                                hex.push(h);
+                                if h.is_ascii_hexdigit() {
+                                    hex.push(h);
+                                } else {
+                                    return Err(format!("Invalid unicode escape sequence: \\u{}{}", hex, h));
+                                }
+                            } else {
+                                return Err(format!("Invalid unicode escape sequence: incomplete \\u{}", hex));
                             }
                         }
                         if let Ok(code) = u32::from_str_radix(&hex, 16) {
@@ -394,7 +416,7 @@ fn decode_escape_sequences(inner: &str) -> JsString {
         }
     }
 
-    JsString::from(result)
+    Ok(JsString::from(result))
 }
 
 /// Parse a regexp literal: /pattern/flags
@@ -4717,7 +4739,7 @@ fn rule_literal(r: &RuleBuilder) -> Combinator {
         kw(r, "true").ast("|_: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Boolean(true), span })))) }"),
         kw(r, "false").ast("|_: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Boolean(false), span })))) }"),
         kw(r, "null").ast("|_: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Null, span })))) }"),
-        kw(r, "undefined").ast("|_: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Undefined, span })))) }"),
+        // Note: undefined is NOT a literal - it's an identifier that refers to the global undefined value
     ))
 }
 
@@ -5083,6 +5105,7 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
             // Remove backticks from both ends and decode escapes
             let content: JsString = if text_str.starts_with('`') && text_str.ends_with('`') && text_str.len() >= 2 {
                 decode_escape_sequences(&text_str[1..text_str.len()-1])
+                    .map_err(|e| ParseError::new(e, 0, 0))?
             } else {
                 text
             };
@@ -5112,6 +5135,7 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
             let head_str = head_text.as_ref();
             let head_content: JsString = if head_str.starts_with('`') && head_str.ends_with(\"${\") && head_str.len() >= 3 {
                 decode_escape_sequences(&head_str[1..head_str.len()-2])
+                    .map_err(|e| ParseError::new(e, 0, 0))?
             } else {
                 head_text
             };
@@ -5134,6 +5158,7 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
                         let middle_str = middle_text.as_ref();
                         let middle_content: JsString = if middle_str.starts_with('}') && middle_str.ends_with(\"${\") && middle_str.len() >= 3 {
                             decode_escape_sequences(&middle_str[1..middle_str.len()-2])
+                                .map_err(|e| ParseError::new(e, 0, 0))?
                         } else {
                             middle_text
                         };
@@ -5151,6 +5176,7 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
             let tail_str = tail_text.as_ref();
             let tail_content: JsString = if tail_str.starts_with('}') && tail_str.ends_with('`') && tail_str.len() >= 2 {
                 decode_escape_sequences(&tail_str[1..tail_str.len()-1])
+                    .map_err(|e| ParseError::new(e, 0, 0))?
             } else {
                 tail_text
             };

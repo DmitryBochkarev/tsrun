@@ -3603,3 +3603,10 @@ fn test_expression_with_comment() {
     let prog = parse("Math.E === Math.E  // Should still be defined");
     assert_eq!(prog.body.len(), 1);
 }
+
+// Debug: assignment to undefined (undefined is not a reserved word)
+#[test]
+fn test_assign_undefined() {
+    let prog = parse("undefined = 1");
+    assert_eq!(prog.body.len(), 1);
+}
