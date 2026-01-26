@@ -5769,7 +5769,8 @@ fn rule_base_type(r: &RuleBuilder) -> Combinator {
         r.parse("object_type"),
         // Memoized to avoid exponential backtracking on inputs with many [ in type positions
         r.memoize(5, r.parse("tuple_type")),
-        r.parse("parenthesized_type"),
+        // Memoized to avoid exponential backtracking on inputs with many ( in type positions
+        r.memoize(6, r.parse("parenthesized_type")),
     ))
 }
 
