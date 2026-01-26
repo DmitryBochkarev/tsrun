@@ -3439,3 +3439,117 @@ fn test_object_method_with_return_type() {
         panic!("Expected VariableDeclaration");
     }
 }
+
+// Regression: new expression with member access callee was parsed incorrectly
+// `new Models.Simple()` was parsed as `(new Models).Simple()` instead of `new (Models.Simple)()`
+#[test]
+fn test_new_member_expression_callee() {
+    use tsrun::ast::{Expression, Statement};
+    let prog = parse("new Models.Simple()");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::Expression(stmt) = &prog.body[0] {
+        if let Expression::New(new_expr) = &*stmt.expression {
+            // Callee must be a member expression, not an identifier
+            if let Expression::Member(_) = &*new_expr.callee {
+                // Good, callee is Member expression
+            } else {
+                panic!("Expected callee to be MemberExpression, got {:?}", new_expr.callee);
+            }
+        } else {
+            panic!("Expected NewExpression, got {:?}", stmt.expression);
+        }
+    } else {
+        panic!("Expected ExpressionStatement");
+    }
+}
+
+// Regression: unicode escape in member access property name
+#[test]
+fn test_unicode_escape_member_property() {
+    // obj.b\u0061r should parse as obj.bar (member access with unicode escape in property)
+    let prog = parse("obj.b\\u0061r");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: double underscore identifier was parsed as NaN + identifier
+// Number literals with only underscores (e.g., `__`) should not match as numbers
+#[test]
+fn test_double_underscore_identifier() {
+    use tsrun::ast::{Expression, Statement};
+    // __test should parse as a single identifier, not NaN + "test"
+    let prog = parse("__test");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::Expression(stmt) = &prog.body[0] {
+        if let Expression::Identifier(id) = &*stmt.expression {
+            assert_eq!(id.name, "__test");
+        } else {
+            panic!("Expected Identifier, got {:?}", stmt.expression);
+        }
+    } else {
+        panic!("Expected ExpressionStatement");
+    }
+
+    // typeof __push should parse correctly
+    let prog2 = parse("typeof __push");
+    assert_eq!(prog2.body.len(), 1);
+    if let Statement::Expression(stmt) = &prog2.body[0] {
+        if let Expression::Unary(unary) = &*stmt.expression {
+            if let Expression::Identifier(id) = &*unary.argument {
+                assert_eq!(id.name, "__push");
+            } else {
+                panic!("Expected Identifier argument, got {:?}", unary.argument);
+            }
+        } else {
+            panic!("Expected UnaryExpression, got {:?}", stmt.expression);
+        }
+    } else {
+        panic!("Expected ExpressionStatement");
+    }
+}
+
+// Regression: class getter with numeric key was parsed incorrectly
+#[test]
+fn test_class_getter_numeric_key() {
+    let prog = parse("class C { get 2() { return 'hello'; } }");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::ClassDeclaration(class) = &prog.body[0] {
+        if let ClassMember::Method(method) = &class.body.members[0] {
+            assert_eq!(method.kind, MethodKind::Get, "Should be a getter");
+            assert!(matches!(&method.key, ObjectPropertyKey::Number(_)), "Key should be Number");
+        } else {
+            panic!("Expected Method");
+        }
+    } else {
+        panic!("Expected ClassDeclaration");
+    }
+}
+
+// Regression: spread in function call with whitespace after comma failed
+// sum(1, ...args) failed because postfix_call separator doesn't consume trailing ws
+#[test]
+fn test_spread_in_function_call_with_whitespace() {
+    parse("sum(...args)");
+    parse("sum(1, 2)");
+    parse("sum(1,...args)");
+    parse("sum(1, ...args)");
+}
+
+// Regression: constructor type `new () => T` was not recognized in type constraints
+// This caused mixin patterns like `<T extends new (...args: any[]) => any>` to fail
+#[test]
+fn test_constructor_type_in_generic_constraint() {
+    parse("function foo() {}");
+    parse("function foo<T>() {}");
+    parse("function foo<T extends object>() {}");
+    parse("function foo<T extends new () => object>() {}");
+}
+
+// Regression: declare statements
+#[test]
+fn test_declare_statements() {
+    // declare const and declare function work
+    parse("declare const process: { env: Record<string, string> };");
+    parse("declare function require(id: string): any;");
+    // declare class with method signatures works
+    parse("declare class EventEmitter { on(event: string, listener: Function): void; }");
+}

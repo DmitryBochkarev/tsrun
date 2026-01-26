@@ -159,6 +159,7 @@ pub fn typescript_grammar() -> Grammar {
         .rule("union_type", rule_union_type)
         .rule("intersection_type", rule_intersection_type)
         .rule("function_type", rule_function_type)
+        .rule("constructor_type", rule_constructor_type)
         .rule("conditional_type", rule_conditional_type)
         .rule("typeof_type", rule_typeof_type)
         .rule("keyof_type", rule_keyof_type)
@@ -2016,12 +2017,40 @@ fn result_to_prop_key(result: ParseResult, span: &Span) -> ObjectPropertyKey {
                 _ => ObjectPropertyKey::Number(*lit),
             }
         }
-        // Handle computed key: [expression] produces List([op, expression, op])
+        // Handle various list structures from property_key rule
         ParseResult::List(parts) => {
-            // Look for an expression in the list (skip ops)
+            // Look for an expression or text in the list (skip ops/ws)
             for part in parts {
-                if let ParseResult::Expr(e) = part {
-                    return ObjectPropertyKey::Computed(Rc::new(e));
+                match part {
+                    // Number/string literal as AST: sequence((literal, ws))
+                    ParseResult::Expr(Expression::Literal(lit)) => {
+                        return match lit.value {
+                            LiteralValue::String(s) => ObjectPropertyKey::String(StringLiteral { value: s, span: lit.span }),
+                            _ => ObjectPropertyKey::Number(*lit),
+                        };
+                    }
+                    // Raw text from number_literal or string_literal capture
+                    // sequence((number_literal, ws)) produces [Text("2", span), None]
+                    // sequence((string_literal, ws)) produces [Text("'foo'", span), None]
+                    ParseResult::Text(text, text_span) => {
+                        let s = text.as_ref();
+                        // Check if it's a string literal (starts with quote)
+                        if s.starts_with('"') || s.starts_with('\'') {
+                            let value = parse_string_literal(&text);
+                            return ObjectPropertyKey::String(StringLiteral { value, span: text_span });
+                        }
+                        // Otherwise it's a number literal
+                        let value = parse_number(&text);
+                        return ObjectPropertyKey::Number(Literal {
+                            value: LiteralValue::Number(value),
+                            span: text_span
+                        });
+                    }
+                    // Computed key: [expression] produces List([op, expression, op])
+                    ParseResult::Expr(e) => {
+                        return ObjectPropertyKey::Computed(Rc::new(e));
+                    }
+                    _ => {}
                 }
             }
             // Fallback if no expression found
@@ -2029,6 +2058,60 @@ fn result_to_prop_key(result: ParseResult, span: &Span) -> ObjectPropertyKey {
         }
         _ => ObjectPropertyKey::Identifier(Identifier { name: JsString::from(""), span: span.clone() }),
     }
+}
+
+/// Decode unicode escape sequences in identifier text
+/// Handles \uXXXX and \u{XXXXX} escape sequences
+fn decode_identifier(text: &JsString) -> JsString {
+    let s = text.as_ref();
+    // Fast path: if no backslash, return as-is
+    if !s.contains('\\') {
+        return text.clone();
+    }
+
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&'u') {
+            chars.next(); // consume 'u'
+            if chars.peek() == Some(&'{') {
+                // \u{HHHH} form
+                chars.next(); // consume '{'
+                let mut hex = String::new();
+                while let Some(&h) = chars.peek() {
+                    if h == '}' {
+                        chars.next();
+                        break;
+                    }
+                    chars.next();
+                    hex.push(h);
+                }
+                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                    if let Some(ch) = char::from_u32(code) {
+                        result.push(ch);
+                    }
+                }
+            } else {
+                // \uHHHH form
+                let mut hex = String::new();
+                for _ in 0..4 {
+                    if let Some(h) = chars.next() {
+                        hex.push(h);
+                    }
+                }
+                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                    if let Some(ch) = char::from_u32(code) {
+                        result.push(ch);
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    JsString::from(result)
 }
 "#;
 
@@ -2061,30 +2144,35 @@ fn rule_block_comment(r: &RuleBuilder) -> Combinator {
 
 fn rule_number_literal(r: &RuleBuilder) -> Combinator {
     r.capture(r.choice((
-        // Hex: 0x...
+        // Hex: 0x... (must have at least one hex digit)
         r.sequence((
             r.lit("0"),
             r.choice((r.char('x'), r.char('X'))),
-            r.one_or_more(r.choice((r.hex_digit(), r.char('_')))),
+            r.hex_digit(),
+            r.zero_or_more(r.choice((r.hex_digit(), r.char('_')))),
             r.optional(r.char('n')), // BigInt suffix
         )),
-        // Binary: 0b...
+        // Binary: 0b... (must have at least one binary digit)
         r.sequence((
             r.lit("0"),
             r.choice((r.char('b'), r.char('B'))),
-            r.one_or_more(r.choice((r.range('0', '1'), r.char('_')))),
+            r.range('0', '1'),
+            r.zero_or_more(r.choice((r.range('0', '1'), r.char('_')))),
             r.optional(r.char('n')),
         )),
-        // Octal: 0o...
+        // Octal: 0o... (must have at least one octal digit)
         r.sequence((
             r.lit("0"),
             r.choice((r.char('o'), r.char('O'))),
-            r.one_or_more(r.choice((r.range('0', '7'), r.char('_')))),
+            r.range('0', '7'),
+            r.zero_or_more(r.choice((r.range('0', '7'), r.char('_')))),
             r.optional(r.char('n')),
         )),
         // Decimal (possibly with exponent)
+        // Must start with a digit, then allow digits or underscores
         r.sequence((
-            r.one_or_more(r.choice((r.digit(), r.char('_')))),
+            r.digit(),
+            r.zero_or_more(r.choice((r.digit(), r.char('_')))),
             r.optional(r.sequence((
                 r.char('.'),
                 r.zero_or_more(r.choice((r.digit(), r.char('_')))),
@@ -2092,18 +2180,21 @@ fn rule_number_literal(r: &RuleBuilder) -> Combinator {
             r.optional(r.sequence((
                 r.choice((r.char('e'), r.char('E'))),
                 r.optional(r.choice((r.char('+'), r.char('-')))),
-                r.one_or_more(r.choice((r.digit(), r.char('_')))),
+                r.digit(),
+                r.zero_or_more(r.choice((r.digit(), r.char('_')))),
             ))),
             r.optional(r.char('n')),
         )),
         // Decimal starting with dot
         r.sequence((
             r.char('.'),
-            r.one_or_more(r.choice((r.digit(), r.char('_')))),
+            r.digit(),
+            r.zero_or_more(r.choice((r.digit(), r.char('_')))),
             r.optional(r.sequence((
                 r.choice((r.char('e'), r.char('E'))),
                 r.optional(r.choice((r.char('+'), r.char('-')))),
-                r.one_or_more(r.choice((r.digit(), r.char('_')))),
+                r.digit(),
+                r.zero_or_more(r.choice((r.digit(), r.char('_')))),
             ))),
         )),
     )))
@@ -4490,10 +4581,12 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
     ])
 }
 
-/// Callee for new expression - like primary_inner but without generic_call_expression
-/// so that `new Promise<void>(...)` parses type args separately
+/// Callee for new expression - allows member expressions but not calls
+/// so that `new Models.Simple()` parses correctly and
+/// `new Promise<void>(...)` parses type args separately
 fn rule_new_callee(r: &RuleBuilder) -> Combinator {
-    r.choice(vec![
+    // Use Pratt parser with only member access postfixes (no calls)
+    let base = r.choice(vec![
         r.parse("identifier").ast(
             "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
             let ident = to_ident(result)?;
@@ -4501,7 +4594,15 @@ fn rule_new_callee(r: &RuleBuilder) -> Combinator {
         }",
         ),
         r.parse("parenthesized"),
-    ])
+    ]);
+
+    r.pratt(base, |ops| {
+        ops
+            // Member access: obj.prop
+            .postfix_member(".", 18, "|o, p, s| member(o, p, false, s)")
+            // Computed member: obj[expr]
+            .postfix_index("[", "]", 18, "|o, e, s| member_computed(o, e, false, s)")
+    })
 }
 
 fn rule_literal(r: &RuleBuilder) -> Combinator {
@@ -4528,15 +4629,40 @@ fn rule_literal(r: &RuleBuilder) -> Combinator {
     ))
 }
 
+/// Unicode escape sequence: \uXXXX or \u{XXXXX}
+fn unicode_escape(r: &RuleBuilder) -> Combinator {
+    r.choice((
+        // \u{XXXXX} form (1-6 hex digits)
+        r.sequence((
+            r.lit("\\u{"),
+            r.one_or_more(r.hex_digit()),
+            r.char('}'),
+        )),
+        // \uXXXX form (exactly 4 hex digits)
+        r.sequence((
+            r.lit("\\u"),
+            r.hex_digit(),
+            r.hex_digit(),
+            r.hex_digit(),
+            r.hex_digit(),
+        )),
+    ))
+}
+
 fn rule_identifier(r: &RuleBuilder) -> Combinator {
+    // Identifier start: regular char or unicode escape
+    let ident_start_or_escape = r.choice((r.ident_start(), unicode_escape(r)));
+    // Identifier continue: regular char or unicode escape
+    let ident_cont_or_escape = r.choice((r.ident_cont(), unicode_escape(r)));
+
     r.sequence((
         r.capture(r.sequence((
-            r.ident_start(),
-            r.zero_or_more(r.ident_cont()),
+            ident_start_or_escape,
+            r.zero_or_more(ident_cont_or_escape),
         ))),
         r.parse("ws"),
     ))
-    .ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Ident(Identifier { name: result.into_text(), span })) }")
+    .ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Ident(Identifier { name: decode_identifier(&result.into_text()), span })) }")
 }
 
 fn rule_this_expression(r: &RuleBuilder) -> Combinator {
@@ -5146,7 +5272,24 @@ fn rule_argument_list(r: &RuleBuilder) -> Combinator {
 
 fn rule_argument(r: &RuleBuilder) -> Combinator {
     // Use assignment_expression to avoid comma being consumed
-    r.choice((r.parse("spread_element"), r.parse("assignment_expression")))
+    // Add leading whitespace since call argument parsing doesn't consume ws after comma
+    r.sequence((
+        r.parse("ws"),
+        r.choice((r.parse("spread_element"), r.parse("assignment_expression")))
+    )).ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        // Extract the inner result (skip the ws which produces None)
+        match result {
+            ParseResult::List(items) => {
+                for item in items {
+                    if !matches!(item, ParseResult::None) {
+                        return Ok(item);
+                    }
+                }
+                Ok(ParseResult::None)
+            }
+            other => Ok(other)
+        }
+    }")
 }
 
 // Parameters
@@ -5443,6 +5586,7 @@ fn rule_type(r: &RuleBuilder) -> Combinator {
     r.choice((
         r.parse("union_type"),
         r.parse("intersection_type"),
+        r.parse("constructor_type"),  // new (...) => type
         r.parse("function_type"),
         r.parse("conditional_type"),
         r.parse("primary_type"),
@@ -5692,6 +5836,19 @@ fn rule_intersection_type(r: &RuleBuilder) -> Combinator {
 
 fn rule_function_type(r: &RuleBuilder) -> Combinator {
     r.sequence((
+        r.optional(r.parse("type_parameters")),
+        op(r, "("),
+        r.optional(r.parse("parameter_list")),
+        op(r, ")"),
+        op(r, "=>"),
+        r.parse("type"),
+    ))
+}
+
+// Constructor type: new <T>(...args) => ReturnType
+fn rule_constructor_type(r: &RuleBuilder) -> Combinator {
+    r.sequence((
+        kw(r, "new"),
         r.optional(r.parse("type_parameters")),
         op(r, "("),
         r.optional(r.parse("parameter_list")),

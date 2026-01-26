@@ -32,6 +32,7 @@ impl<'a> CodeGenerator<'a> {
         self.emit_parse_error();
         self.emit_parse_result_enum();
         self.emit_helpers();
+        self.emit_builtin_helpers();
         self.emit_work_enum();
         self.emit_parser();
         self.output
@@ -42,6 +43,57 @@ impl<'a> CodeGenerator<'a> {
             self.output.push_str(helper);
             self.blank();
         }
+    }
+
+    fn emit_builtin_helpers(&mut self) {
+        // Helper function to decode unicode escapes in identifiers
+        self.line("/// Decode unicode escape sequences in identifier text");
+        self.line("fn decode_identifier_escapes(text: &JsString) -> JsString {");
+        self.indent += 1;
+        self.line("let s = text.as_ref();");
+        self.line("if !s.contains('\\\\') { return text.clone(); }");
+        self.line("let mut result = String::with_capacity(s.len());");
+        self.line("let mut chars = s.chars().peekable();");
+        self.line("while let Some(c) = chars.next() {");
+        self.indent += 1;
+        self.line("if c == '\\\\' && chars.peek() == Some(&'u') {");
+        self.indent += 1;
+        self.line("chars.next();");
+        self.line("if chars.peek() == Some(&'{') {");
+        self.indent += 1;
+        self.line("chars.next();");
+        self.line("let mut hex = String::new();");
+        self.line("while let Some(&h) = chars.peek() {");
+        self.indent += 1;
+        self.line("if h == '}' { chars.next(); break; }");
+        self.line("chars.next(); hex.push(h);");
+        self.indent -= 1;
+        self.line("}");
+        self.line("if let Ok(code) = u32::from_str_radix(&hex, 16) {");
+        self.indent += 1;
+        self.line("if let Some(ch) = char::from_u32(code) { result.push(ch); }");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("let mut hex = String::new();");
+        self.line("for _ in 0..4 { if let Some(h) = chars.next() { hex.push(h); } }");
+        self.line("if let Ok(code) = u32::from_str_radix(&hex, 16) {");
+        self.indent += 1;
+        self.line("if let Some(ch) = char::from_u32(code) { result.push(ch); }");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("} else { result.push(c); }");
+        self.indent -= 1;
+        self.line("}");
+        self.line("JsString::from(result)");
+        self.indent -= 1;
+        self.line("}");
+        self.blank();
     }
 
     fn line(&mut self, s: &str) {
@@ -2876,17 +2928,65 @@ impl<'a> CodeGenerator<'a> {
                         prefix
                     ));
                     self.indent += 1;
-                    // Capture identifier
+                    // Capture identifier (with unicode escape support)
                     self.line("let ident_start = self.pos;");
-                    self.line("if self.current_char().map_or(false, |c| c.is_ascii_alphabetic() || c == '_' || c == '$' || c == '#') {");
+                    // Check for identifier start: ASCII ident char, #, or unicode escape \\u
+                    self.line("let is_ident_start = self.current_char().map_or(false, |c| c.is_ascii_alphabetic() || c == '_' || c == '$' || c == '#');");
+                    self.line("let is_unicode_escape = self.input.get(self.pos..).map_or(false, |s| s.starts_with(\"\\\\u\"));");
+                    self.line("if is_ident_start || is_unicode_escape {");
                     self.indent += 1;
-                    self.line("self.advance();");
-                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {");
+                    // Handle first character (regular or unicode escape)
+                    self.line("if is_unicode_escape {");
+                    self.indent += 1;
+                    self.line("self.advance(); // \\\\");
+                    self.line("self.advance(); // u");
+                    self.line("if self.current_char() == Some('{') {");
+                    self.indent += 1;
+                    self.line("self.advance(); // {");
+                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_hexdigit()) { self.advance(); }");
+                    self.line("if self.current_char() == Some('}') { self.advance(); }");
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line("for _ in 0..4 { if self.current_char().map_or(false, |c| c.is_ascii_hexdigit()) { self.advance(); } }");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("} else {");
                     self.indent += 1;
                     self.line("self.advance();");
                     self.indent -= 1;
                     self.line("}");
-                    self.line("let prop_name = self.text_result(ident_start, self.pos);");
+                    // Continue with rest of identifier
+                    self.line("loop {");
+                    self.indent += 1;
+                    self.line("let is_cont = self.current_char().map_or(false, |c| c.is_ascii_alphanumeric() || c == '_' || c == '$');");
+                    self.line("let is_escape = self.input.get(self.pos..).map_or(false, |s| s.starts_with(\"\\\\u\"));");
+                    self.line("if is_cont {");
+                    self.indent += 1;
+                    self.line("self.advance();");
+                    self.indent -= 1;
+                    self.line("} else if is_escape {");
+                    self.indent += 1;
+                    self.line("self.advance(); self.advance();"); // \u
+                    self.line("if self.current_char() == Some('{') {");
+                    self.indent += 1;
+                    self.line("self.advance();");
+                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_hexdigit()) { self.advance(); }");
+                    self.line("if self.current_char() == Some('}') { self.advance(); }");
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line("for _ in 0..4 { if self.current_char().map_or(false, |c| c.is_ascii_hexdigit()) { self.advance(); } }");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("} else { break; }");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.line("let raw_prop_name = self.text_result(ident_start, self.pos);");
+                    // Decode unicode escapes in the property name
+                    self.line("let prop_name = decode_identifier_escapes(&raw_prop_name);");
                     // Skip trailing whitespace (like the identifier rule does)
                     self.line("while self.current_char().map_or(false, |c| c.is_ascii_whitespace()) {");
                     self.indent += 1;

@@ -1725,6 +1725,109 @@ fn test_call_bind_invoke_simple() {
 // ============================================================
 
 #[test]
+fn test_call_bind_debug_chain() {
+    // Debug: test each step of the chain
+    // Function.prototype is actually typeof "function" in JS (it's the only prototype that's callable)
+    assert_eq!(
+        eval("typeof Function.prototype"),
+        JsValue::from("function")
+    );
+    assert_eq!(
+        eval("typeof Function.prototype.call"),
+        JsValue::from("function")
+    );
+    assert_eq!(
+        eval("typeof Array.prototype.push"),
+        JsValue::from("function")
+    );
+    // Test bind exists
+    assert_eq!(
+        eval("typeof Function.prototype.call.bind"),
+        JsValue::from("function")
+    );
+    // Simple bind test
+    assert_eq!(
+        eval(
+            r#"
+            var push = Array.prototype.push;
+            var bound = push.bind([]);
+            typeof bound
+        "#
+        ),
+        JsValue::from("function")
+    );
+    // Test call.bind on push - isolating the issue
+    // First: does bind work?
+    assert_eq!(
+        eval("var f = function(){}; typeof f.bind"),
+        JsValue::from("function")
+    );
+    // Does bind return a function?
+    assert_eq!(
+        eval("var f = function(){}; typeof f.bind({})"),
+        JsValue::from("function")
+    );
+    // Test multi-line version
+    assert_eq!(
+        eval(
+            r#"
+            var f = function(){};
+            var bound = f.bind({});
+            typeof bound
+        "#
+        ),
+        JsValue::from("function")
+    );
+    // Isolate: can we even access Array.prototype.push in a call?
+    assert_eq!(
+        eval("typeof Array.prototype.push"),
+        JsValue::from("function")
+    );
+    // Can we pass it as argument?
+    assert_eq!(
+        eval("(function(x) { return typeof x; })(Array.prototype.push)"),
+        JsValue::from("function")
+    );
+    // What about nested in .bind() call?
+    assert_eq!(
+        eval("var x = (function(){}).bind(Array.prototype.push); typeof x"),
+        JsValue::from("function")
+    );
+    // The problematic pattern step by step
+    // Step 1: Access Function.prototype.call
+    assert_eq!(
+        eval("var call = Function.prototype.call; typeof call"),
+        JsValue::from("function")
+    );
+    // Step 2: Access its bind
+    assert_eq!(
+        eval("var bind = Function.prototype.call.bind; typeof bind"),
+        JsValue::from("function")
+    );
+    // Step 3: call.bind with a simple argument
+    assert_eq!(
+        eval("var x = Function.prototype.call.bind(function(){}); typeof x"),
+        JsValue::from("function")
+    );
+    // Step 4: call.bind with member expression as argument
+    assert_eq!(
+        eval("var x = Function.prototype.call.bind(Array.prototype.push); typeof x"),
+        JsValue::from("function")
+    );
+    // Now test with multi-line code (the original failing test format)
+    // This version with leading whitespace fails:
+    assert_eq!(
+        eval(
+            r#"
+var __push = Function.prototype.call.bind(Array.prototype.push);
+typeof __push
+"#
+        ),
+        JsValue::from("function")
+    );
+}
+
+#[test]
 fn test_call_bind_basic() {
     // Function.prototype.call.bind() creates a function that calls the original
     // with a specific receiver
