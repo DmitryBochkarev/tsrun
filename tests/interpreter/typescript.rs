@@ -2369,6 +2369,22 @@ fn test_declare_namespace() {
 }
 
 #[test]
+fn test_declare_namespace_with_function() {
+    // Regression: function signatures inside declare namespace
+    assert_eq!(
+        eval(
+            r#"
+            declare namespace fs {
+                function readFile(path: string): string;
+            }
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
 fn test_declare_module_string() {
     assert_eq!(
         eval(

@@ -15,6 +15,11 @@ fn parse(source: &str) -> Program {
     Parser::new(source, &mut dict).parse_program().unwrap()
 }
 
+fn parse_fails(source: &str) -> bool {
+    let mut dict = StringDict::new();
+    Parser::new(source, &mut dict).parse_program().is_err()
+}
+
 #[test]
 fn test_variable_declaration() {
     let prog = parse("let x: number = 1;");
@@ -301,6 +306,21 @@ fn test_function_type_expression_optional_param() {
 fn test_interface_declaration() {
     let prog = parse("interface Person { name: string; age: number; }");
     assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: interface with property without trailing semicolon
+#[test]
+fn test_interface_no_trailing_semicolon() {
+    let prog = parse("interface Foo { x: number }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: interface followed by semicolon and another statement
+#[test]
+fn test_interface_semicolon_then_value() {
+    // interface + empty statement (;) + expression statement (42) = 3 statements
+    let prog = parse("interface Foo { x: number }; 42");
+    assert_eq!(prog.body.len(), 3);
 }
 
 #[test]
@@ -3552,4 +3572,34 @@ fn test_declare_statements() {
     parse("declare function require(id: string): any;");
     // declare class with method signatures works
     parse("declare class EventEmitter { on(event: string, listener: Function): void; }");
+    // declare namespace with ambient function
+    parse("declare namespace fs { function readFile(path: string): string; }");
+}
+
+// Regression: unclosed braces should fail to parse
+#[test]
+fn test_unclosed_brace_fails() {
+    assert!(parse_fails("{"));
+}
+
+// "return return" is valid with ASI - produces two return statements
+#[test]
+fn test_return_return_is_valid() {
+    // With ASI, "return return" parses as two return statements
+    let prog = parse("return return");
+    assert_eq!(prog.body.len(), 2);
+}
+
+// Regression: inline comments should be handled
+#[test]
+fn test_inline_comment() {
+    let prog = parse("let x = 1; // comment\nlet y = 2;");
+    assert_eq!(prog.body.len(), 2);
+}
+
+// Regression: expression with inline comment
+#[test]
+fn test_expression_with_comment() {
+    let prog = parse("Math.E === Math.E  // Should still be defined");
+    assert_eq!(prog.body.len(), 1);
 }

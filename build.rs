@@ -66,6 +66,16 @@ impl<'a> Parser<'a> {
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
         let result = self.parse()?;
 
+        // Check that all input was consumed
+        if self.pos < self.input.len() {
+            let remaining = &self.input[self.pos..];
+            let preview: String = remaining.chars().take(20).collect();
+            return Err(ParseError {
+                message: format!("Unexpected input: '{}'", preview),
+                span: Span { start: self.pos, end: self.input.len(), line: self.line, column: self.column },
+            });
+        }
+
         // Extract Program from the parse result
         match result {
             ParseResult::Prog(program) => Ok(program),

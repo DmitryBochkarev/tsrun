@@ -64,6 +64,8 @@ pub fn typescript_grammar() -> Grammar {
         .rule("semicolon", rule_semicolon)
         .rule("declare_statement", rule_declare_statement)
         .rule("declare_function", rule_declare_function)
+        .rule("declare_namespace", rule_declare_namespace)
+        .rule("ambient_statement", rule_ambient_statement)
         .rule("declare_module", rule_declare_module)
         .rule("declare_global", rule_declare_global)
         // Import/Export
@@ -2113,6 +2115,26 @@ fn decode_identifier(text: &JsString) -> JsString {
 
     JsString::from(result)
 }
+
+/// Reserved keywords that cannot be used as identifiers
+const RESERVED_KEYWORDS: &[&str] = &[
+    // ECMAScript reserved words
+    "break", "case", "catch", "continue", "debugger", "default", "delete", "do",
+    "else", "finally", "for", "function", "if", "in", "instanceof", "new",
+    "return", "switch", "this", "throw", "try", "typeof", "var", "void",
+    "while", "with",
+    // Literals
+    "null", "true", "false",
+    // Strict mode reserved words
+    "class", "const", "enum", "export", "extends", "import", "super",
+    // TypeScript and future reserved
+    "implements", "interface", "let", "package", "private", "protected",
+    "public", "static", "yield", "await",
+];
+
+fn is_reserved_keyword(name: &str) -> bool {
+    RESERVED_KEYWORDS.contains(&name)
+}
 "#;
 
 // === Whitespace and Comments ===
@@ -2368,10 +2390,11 @@ fn rule_program(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("ws"), // Consume leading whitespace
         r.zero_or_more(r.parse("statement")),
+        r.parse("ws"), // Consume trailing whitespace/comments
     ))
     .ast(
         "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
-            // result is [ws, statements]
+            // result is [ws, statements, ws]
             let parts = result.into_list();
             let stmts_result = parts.into_iter().nth(1).unwrap_or(ParseResult::None);
             let items = stmts_result.into_list();
@@ -3507,7 +3530,9 @@ fn rule_expression_statement(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_empty_statement(r: &RuleBuilder) -> Combinator {
-    op(r, ";")
+    op(r, ";").ast("|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        Ok(ParseResult::Stmt(Statement::Empty))
+    }")
 }
 
 fn rule_semicolon(r: &RuleBuilder) -> Combinator {
@@ -3523,10 +3548,10 @@ fn rule_declare_statement(r: &RuleBuilder) -> Combinator {
         r.parse("declare_global"),  // Must come before declare_module (more specific)
         r.parse("declare_module"),
         r.parse("declare_function"),
+        r.parse("declare_namespace"),  // Must use ambient version for function signatures
         r.parse("variable_declaration"),
         r.parse("class_declaration"),
         r.parse("enum_declaration"),
-        r.parse("namespace_declaration"),
         r.parse("interface_declaration"),
         r.parse("type_alias_declaration"),
     )))).ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
@@ -3576,6 +3601,66 @@ fn rule_declare_function(r: &RuleBuilder) -> Combinator {
         }
     }",
     )
+}
+
+fn rule_declare_namespace(r: &RuleBuilder) -> Combinator {
+    // `declare namespace X { ... }` - namespace with ambient members
+    // Inside a declare namespace, function declarations are ambient (no body)
+    r.sequence((
+        kw(r, "namespace"),
+        r.parse("identifier"),
+        op(r, "{"),
+        r.zero_or_more(r.parse("ambient_statement")),
+        op(r, "}"),
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [namespace, id, {, statements..., }]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _namespace_kw = iter.next();
+            let id = iter.next().unwrap_or(ParseResult::None);
+            let _open_brace = iter.next();
+            let body_result = iter.next().unwrap_or(ParseResult::None);
+            // _close_brace
+
+            let identifier = to_ident(id)?;
+            let body_stmts: Vec<Statement> = match body_result {
+                ParseResult::List(items) => {
+                    items.into_iter()
+                        .filter_map(|item| match item {
+                            ParseResult::Stmt(s) => Some(s),
+                            _ => None,
+                        })
+                        .collect()
+                }
+                _ => vec![],
+            };
+
+            Ok(ParseResult::Stmt(Statement::NamespaceDeclaration(Box::new(NamespaceDeclaration {
+                id: identifier,
+                body: Rc::from(body_stmts),
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected declare namespace parts\".to_string(), 0, 0))
+        }
+    }",
+    )
+}
+
+fn rule_ambient_statement(r: &RuleBuilder) -> Combinator {
+    // Ambient statements inside declare namespace/module
+    // These include function signatures (no body), interfaces, type aliases, etc.
+    r.choice((
+        r.parse("declare_function"),  // function foo(): void;
+        r.parse("interface_declaration"),
+        r.parse("type_alias_declaration"),
+        r.parse("variable_declaration"),
+        r.parse("class_declaration"),
+        r.parse("enum_declaration"),
+        r.parse("empty_statement"),
+    ))
 }
 
 fn rule_declare_global(r: &RuleBuilder) -> Combinator {
@@ -4572,9 +4657,13 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
         // Memoized to avoid exponential backtracking on inputs with many < characters
         r.memoize(1, r.parse("generic_call_expression")),
         // identifier last since it matches most things
+        // Reserved keywords cannot be used as identifier expressions
         r.parse("identifier").ast(
             "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
             let ident = to_ident(result)?;
+            if is_reserved_keyword(ident.name.as_ref()) {
+                return Err(ParseError::new(format!(\"'{}' is a reserved word\", ident.name), 0, 0));
+            }
             Ok(ParseResult::Expr(Expression::Identifier(ident)))
         }",
         ),
@@ -4590,6 +4679,9 @@ fn rule_new_callee(r: &RuleBuilder) -> Combinator {
         r.parse("identifier").ast(
             "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
             let ident = to_ident(result)?;
+            if is_reserved_keyword(ident.name.as_ref()) {
+                return Err(ParseError::new(format!(\"'{}' is a reserved word\", ident.name), 0, 0));
+            }
             Ok(ParseResult::Expr(Expression::Identifier(ident)))
         }",
         ),
@@ -4662,7 +4754,10 @@ fn rule_identifier(r: &RuleBuilder) -> Combinator {
         ))),
         r.parse("ws"),
     ))
-    .ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Ident(Identifier { name: decode_identifier(&result.into_text()), span })) }")
+    .ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        let name = decode_identifier(&result.into_text());
+        Ok(ParseResult::Ident(Identifier { name, span }))
+    }")
 }
 
 fn rule_this_expression(r: &RuleBuilder) -> Combinator {
