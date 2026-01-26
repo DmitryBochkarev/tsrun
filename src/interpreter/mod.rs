@@ -1845,8 +1845,7 @@ impl Interpreter {
                         Ok(rv) => {
                             let value = rv.value().clone();
                             // Resolve the promise - ignore errors (promise might be settled)
-                            let _ =
-                                builtins::promise::resolve_promise_value(self, &promise, value);
+                            let _ = builtins::promise::resolve_promise_value(self, &promise, value);
                         }
                         Err(e) => {
                             // Reject the promise with the error

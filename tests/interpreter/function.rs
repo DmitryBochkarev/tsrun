@@ -2308,29 +2308,45 @@ console.log("sum(1,2,3,4,5) =", sum(1, 2, 3, 4, 5));
 #[test]
 fn test_release_mode_minimal_function() {
     // Minimal function declaration with type annotation
-    run(&mut super::create_test_runtime(), "function f(x: string): string { return x; } f('test')", None)
-        .expect("Basic function should work");
+    run(
+        &mut super::create_test_runtime(),
+        "function f(x: string): string { return x; } f('test')",
+        None,
+    )
+    .expect("Basic function should work");
 }
 
 #[test]
 fn test_release_mode_minimal_arrow() {
     // Minimal arrow function with type annotation
-    run(&mut super::create_test_runtime(), "const f = (a: number, b: number): number => a + b; f(1, 2)", None)
-        .expect("Arrow function should work");
+    run(
+        &mut super::create_test_runtime(),
+        "const f = (a: number, b: number): number => a + b; f(1, 2)",
+        None,
+    )
+    .expect("Arrow function should work");
 }
 
 #[test]
 fn test_release_mode_minimal_default_param() {
     // Function with default parameter
-    run(&mut super::create_test_runtime(), "function f(x: number = 2): number { return x; } f()", None)
-        .expect("Default param should work");
+    run(
+        &mut super::create_test_runtime(),
+        "function f(x: number = 2): number { return x; } f()",
+        None,
+    )
+    .expect("Default param should work");
 }
 
 #[test]
 fn test_release_mode_minimal_rest_param() {
     // Function with rest parameter
-    run(&mut super::create_test_runtime(), "function f(...args: number[]): number { return args.length; } f(1, 2, 3)", None)
-        .expect("Rest param should work");
+    run(
+        &mut super::create_test_runtime(),
+        "function f(...args: number[]): number { return args.length; } f(1, 2, 3)",
+        None,
+    )
+    .expect("Rest param should work");
 }
 
 #[test]
