@@ -21,6 +21,12 @@ impl Compiler {
     ) -> Result<(), JsError> {
         match pattern {
             Pattern::Identifier(id) => {
+                // In strict mode (which we always use), 'eval' and 'arguments' cannot be binding names
+                if id.name.as_ref() == "eval" || id.name.as_ref() == "arguments" {
+                    return Err(JsError::syntax_error_simple(format!(
+                        "Unexpected eval or arguments in strict mode"
+                    )));
+                }
                 let name_idx = self.builder.add_string(id.name.cheap_clone())?;
                 if is_var {
                     // For var declarations, check if already hoisted

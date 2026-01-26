@@ -1146,6 +1146,19 @@ impl Compiler {
 
             match &param.pattern {
                 crate::ast::Pattern::Identifier(id) => {
+                    // In strict mode, 'eval' and 'arguments' cannot be parameter names
+                    if id.name.as_ref() == "eval" || id.name.as_ref() == "arguments" {
+                        return Err(JsError::syntax_error_simple(
+                            "Unexpected eval or arguments in strict mode",
+                        ));
+                    }
+                    // In strict mode, duplicate parameter names are not allowed
+                    if param_names.contains(&id.name) {
+                        return Err(JsError::syntax_error_simple(format!(
+                            "Duplicate parameter name '{}' not allowed in strict mode",
+                            id.name
+                        )));
+                    }
                     param_names.push(id.name.cheap_clone());
 
                     // Load argument from register and declare variable
@@ -1159,6 +1172,19 @@ impl Compiler {
                 crate::ast::Pattern::Rest(rest) => {
                     rest_param = Some(idx);
                     if let crate::ast::Pattern::Identifier(id) = &*rest.argument {
+                        // In strict mode, 'eval' and 'arguments' cannot be parameter names
+                        if id.name.as_ref() == "eval" || id.name.as_ref() == "arguments" {
+                            return Err(JsError::syntax_error_simple(
+                                "Unexpected eval or arguments in strict mode",
+                            ));
+                        }
+                        // In strict mode, duplicate parameter names are not allowed
+                        if param_names.contains(&id.name) {
+                            return Err(JsError::syntax_error_simple(format!(
+                                "Duplicate parameter name '{}' not allowed in strict mode",
+                                id.name
+                            )));
+                        }
                         param_names.push(id.name.cheap_clone());
 
                         // For rest params, we'll need special handling (not fully implemented)

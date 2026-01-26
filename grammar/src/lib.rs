@@ -223,11 +223,11 @@ fn parse_number(text: &JsString) -> f64 {
 }
 
 /// Parse a string literal, handling escape sequences
-fn parse_string_literal(text: &JsString) -> JsString {
+fn parse_string_literal(text: &JsString) -> Result<JsString, String> {
     let s = text.as_ref();
     // Remove quotes
     if s.len() < 2 {
-        return JsString::from("");
+        return Ok(JsString::from(""));
     }
     let inner = &s[1..s.len() - 1];
 
@@ -247,11 +247,15 @@ fn parse_string_literal(text: &JsString) -> JsString {
                 Some('0') => {
                     // \0 is null only if not followed by a digit
                     if chars.peek().is_some_and(|c| c.is_ascii_digit()) {
-                        // Legacy octal - just push '0' for now
-                        result.push('0');
+                        // Legacy octal escape - not allowed in strict mode
+                        return Err("Octal escape sequences are not allowed in strict mode".to_string());
                     } else {
                         result.push('\0');
                     }
+                }
+                // Legacy octal escapes \1-\7 are not allowed in strict mode
+                Some(d @ '1'..='7') => {
+                    return Err(format!("Octal escape sequences are not allowed in strict mode: \\{}", d));
                 }
                 Some('x') => {
                     // \xHH - hex escape
@@ -314,7 +318,7 @@ fn parse_string_literal(text: &JsString) -> JsString {
         }
     }
 
-    JsString::from(result)
+    Ok(JsString::from(result))
 }
 
 /// Decode escape sequences in a string (shared by string literals and templates)
@@ -334,10 +338,15 @@ fn decode_escape_sequences(inner: &str) -> Result<JsString, String> {
                 Some('v') => result.push('\x0B'),
                 Some('0') => {
                     if chars.peek().is_some_and(|c| c.is_ascii_digit()) {
-                        result.push('0');
+                        // Legacy octal escape - not allowed in strict mode
+                        return Err("Octal escape sequences are not allowed in strict mode".to_string());
                     } else {
                         result.push('\0');
                     }
+                }
+                // Legacy octal escapes \1-\7 are not allowed in strict mode
+                Some(d @ '1'..='7') => {
+                    return Err(format!("Octal escape sequences are not allowed in strict mode: \\{}", d));
                 }
                 Some('x') => {
                     let mut hex = String::new();
@@ -1946,7 +1955,7 @@ fn create_class_method(
         _ => MethodKind::Method,
     };
 
-    let prop_key = result_to_prop_key(key, &span);
+    let prop_key = result_to_prop_key(key, &span)?;
     let params_vec = params_to_vec(params, &span);
     let body_block = match body {
         ParseResult::Stmt(Statement::Block(b)) => Rc::new(b),
@@ -1996,7 +2005,7 @@ fn create_class_property(
     let is_accessor = !matches!(accessor, ParseResult::None);
     let is_optional = !matches!(optional, ParseResult::None);
 
-    let prop_key = result_to_prop_key(key, &span);
+    let prop_key = result_to_prop_key(key, &span)?;
 
     let value = match initializer {
         ParseResult::List(parts) => {
@@ -2024,8 +2033,8 @@ fn create_class_property(
 }
 
 /// Convert ParseResult to ObjectPropertyKey
-fn result_to_prop_key(result: ParseResult, span: &Span) -> ObjectPropertyKey {
-    match result {
+fn result_to_prop_key(result: ParseResult, span: &Span) -> Result<ObjectPropertyKey, ParseError> {
+    Ok(match result {
         ParseResult::Ident(id) => ObjectPropertyKey::Identifier(id),
         ParseResult::Text(s, sp) => {
             // Check if this is a private name (starts with #)
@@ -2048,10 +2057,10 @@ fn result_to_prop_key(result: ParseResult, span: &Span) -> ObjectPropertyKey {
                 match part {
                     // Number/string literal as AST: sequence((literal, ws))
                     ParseResult::Expr(Expression::Literal(lit)) => {
-                        return match lit.value {
+                        return Ok(match lit.value {
                             LiteralValue::String(s) => ObjectPropertyKey::String(StringLiteral { value: s, span: lit.span }),
                             _ => ObjectPropertyKey::Number(*lit),
-                        };
+                        });
                     }
                     // Raw text from number_literal or string_literal capture
                     // sequence((number_literal, ws)) produces [Text("2", span), None]
@@ -2060,19 +2069,19 @@ fn result_to_prop_key(result: ParseResult, span: &Span) -> ObjectPropertyKey {
                         let s = text.as_ref();
                         // Check if it's a string literal (starts with quote)
                         if s.starts_with('"') || s.starts_with('\'') {
-                            let value = parse_string_literal(&text);
-                            return ObjectPropertyKey::String(StringLiteral { value, span: text_span });
+                            let value = parse_string_literal(&text).map_err(|e| ParseError { message: e, span: text_span.clone() })?;
+                            return Ok(ObjectPropertyKey::String(StringLiteral { value, span: text_span }));
                         }
                         // Otherwise it's a number literal
                         let value = parse_number(&text);
-                        return ObjectPropertyKey::Number(Literal {
+                        return Ok(ObjectPropertyKey::Number(Literal {
                             value: LiteralValue::Number(value),
                             span: text_span
-                        });
+                        }));
                     }
                     // Computed key: [expression] produces List([op, expression, op])
                     ParseResult::Expr(e) => {
-                        return ObjectPropertyKey::Computed(Rc::new(e));
+                        return Ok(ObjectPropertyKey::Computed(Rc::new(e)));
                     }
                     _ => {}
                 }
@@ -2081,7 +2090,7 @@ fn result_to_prop_key(result: ParseResult, span: &Span) -> ObjectPropertyKey {
             ObjectPropertyKey::Identifier(Identifier { name: JsString::from(""), span: span.clone() })
         }
         _ => ObjectPropertyKey::Identifier(Identifier { name: JsString::from(""), span: span.clone() }),
-    }
+    })
 }
 
 /// Decode unicode escape sequences in identifier text
@@ -4723,12 +4732,20 @@ fn rule_literal(r: &RuleBuilder) -> Combinator {
     r.choice((
         r.sequence((r.parse("number_literal"), r.parse("ws"))).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
             let text = result.into_text();
+            // Check for legacy octal (strict mode error): starts with 0, followed by digits, no prefix
+            let s = text.as_ref();
+            if s.len() > 1 && s.starts_with('0') {
+                let second = s.chars().nth(1).unwrap_or(' ');
+                if second.is_ascii_digit() && second != '.' {
+                    return Err(ParseError { message: String::from(\"Octal literals are not allowed in strict mode\"), span });
+                }
+            }
             let value = parse_number(&text);
             Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Number(value), span }))))
         }"),
         r.sequence((r.parse("string_literal"), r.parse("ws"))).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
             let text = result.into_text();
-            let value = parse_string_literal(&text);
+            let value = parse_string_literal(&text).map_err(|e| ParseError { message: e, span })?;
             Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::String(value), span }))))
         }"),
         r.sequence((r.parse("regexp_literal"), r.parse("ws"))).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
