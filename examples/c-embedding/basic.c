@@ -35,7 +35,8 @@ static void eval_and_print(TsRunContext* ctx, const char* code) {
         return;
     }
 
-    TsRunStepResult result = tsrun_run(ctx);
+    TsRunStepResult result;
+    tsrun_run(&result, ctx);
 
     switch (result.status) {
         case TSRUN_STEP_COMPLETE: {

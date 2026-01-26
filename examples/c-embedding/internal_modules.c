@@ -266,7 +266,8 @@ static void run_code(const char* title, const char* code) {
         return;
     }
 
-    TsRunStepResult result = tsrun_run(ctx);
+    TsRunStepResult result;
+    tsrun_run(&result, ctx);
 
     if (result.status == TSRUN_STEP_COMPLETE) {
         printf("\n--- Result ---\n");

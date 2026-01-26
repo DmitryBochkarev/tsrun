@@ -337,6 +337,10 @@ pub struct Interpreter {
     /// Suspended VM state waiting for order response from host
     pub(crate) suspended_for_order: Option<bytecode_vm::VmOrderSuspension>,
 
+    /// Promises waiting on specific orders. When an order is fulfilled,
+    /// all promises registered for that order ID are resolved.
+    pub(crate) order_promises: FxHashMap<crate::OrderId, Vec<Gc<JsObject>>>,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Async Context Management
     // ═══════════════════════════════════════════════════════════════════════════
@@ -506,6 +510,7 @@ impl Interpreter {
             order_responses: FxHashMap::default(),
             cancelled_orders: Vec::new(),
             suspended_for_order: None,
+            order_promises: FxHashMap::default(),
             // Async context management
             wait_graph: WaitGraph::new(),
             next_context_id: 1,
@@ -1830,8 +1835,33 @@ impl Interpreter {
     /// and resolve them later via api::resolve_promise.
     pub fn fulfill_orders(&mut self, responses: Vec<crate::OrderResponse>) {
         for response in responses {
+            let order_id = response.id;
+
+            // Resolve any promises that were registered for this order
+            // (e.g., promises created when PendingOrder markers were passed to Promise.all)
+            if let Some(promises) = self.order_promises.remove(&order_id) {
+                for promise in promises {
+                    match &response.result {
+                        Ok(rv) => {
+                            let value = rv.value().clone();
+                            // Resolve the promise - ignore errors (promise might be settled)
+                            let _ =
+                                builtins::promise::resolve_promise_value(self, &promise, value);
+                        }
+                        Err(e) => {
+                            // Reject the promise with the error
+                            let _ = builtins::promise::reject_promise_value(
+                                self,
+                                &promise,
+                                e.to_value(),
+                            );
+                        }
+                    }
+                }
+            }
+
             // Store response - will be injected into VM when execution resumes
-            self.order_responses.insert(response.id, response.result);
+            self.order_responses.insert(order_id, response.result);
         }
     }
 

@@ -225,7 +225,8 @@ static void run_with_events(
     }
 
     // Initial run
-    TsRunStepResult result = tsrun_run(ctx);
+    TsRunStepResult result;
+    tsrun_run(&result, ctx);
 
     // Event loop: run -> handle suspension -> emit events -> continue
     int iterations = 0;
@@ -239,7 +240,7 @@ static void run_with_events(
 
         // Continue execution
         tsrun_step_result_free(&result);
-        result = tsrun_run(ctx);
+        tsrun_run(&result, ctx);
         iterations++;
     }
 

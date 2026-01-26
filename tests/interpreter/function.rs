@@ -2260,3 +2260,302 @@ fn test_async_tco_factorial() {
         JsValue::Number(3628800.0)
     );
 }
+
+// ============================================================
+// WASM Playground example tests
+// ============================================================
+
+#[test]
+fn test_wasm_playground_functions_example() {
+    // This is the exact code from the WASM playground "Functions" example
+    run(
+        &mut super::create_test_runtime(),
+        r#"
+// Regular function declaration
+function greet(name: string): string {
+    return "Hello, " + name + "!";
+}
+
+// Arrow function
+const add = (a: number, b: number): number => a + b;
+
+// Function with default parameters
+function power(base: number, exponent: number = 2): number {
+    let result = 1;
+    for (let i = 0; i < exponent; i++) {
+        result *= base;
+    }
+    return result;
+}
+
+// Rest parameters
+function sum(...numbers: number[]): number {
+    return numbers.reduce((acc, n) => acc + n, 0);
+}
+
+console.log(greet("TypeScript"));
+console.log("2 + 3 =", add(2, 3));
+console.log("5^3 =", power(5, 3));
+console.log("5^2 =", power(5));
+console.log("sum(1,2,3,4,5) =", sum(1, 2, 3, 4, 5));
+"#,
+        None,
+    )
+    .expect("Functions example should run without error");
+}
+
+// Minimal tests to isolate release mode infinite loop issue
+#[test]
+fn test_release_mode_minimal_function() {
+    // Minimal function declaration with type annotation
+    run(&mut super::create_test_runtime(), "function f(x: string): string { return x; } f('test')", None)
+        .expect("Basic function should work");
+}
+
+#[test]
+fn test_release_mode_minimal_arrow() {
+    // Minimal arrow function with type annotation
+    run(&mut super::create_test_runtime(), "const f = (a: number, b: number): number => a + b; f(1, 2)", None)
+        .expect("Arrow function should work");
+}
+
+#[test]
+fn test_release_mode_minimal_default_param() {
+    // Function with default parameter
+    run(&mut super::create_test_runtime(), "function f(x: number = 2): number { return x; } f()", None)
+        .expect("Default param should work");
+}
+
+#[test]
+fn test_release_mode_minimal_rest_param() {
+    // Function with rest parameter
+    run(&mut super::create_test_runtime(), "function f(...args: number[]): number { return args.length; } f(1, 2, 3)", None)
+        .expect("Rest param should work");
+}
+
+#[test]
+fn test_wasm_playground_closures_example() {
+    // "Closures" example from WASM playground
+    run(
+        &mut super::create_test_runtime(),
+        r#"
+// Closures capture variables from their enclosing scope
+
+function makeCounter() {
+    let count = 0;
+    return function() {
+        count++;
+        return count;
+    };
+}
+
+const counter1 = makeCounter();
+const counter2 = makeCounter();
+
+console.log("counter1:", counter1()); // 1
+console.log("counter1:", counter1()); // 2
+console.log("counter1:", counter1()); // 3
+console.log("counter2:", counter2()); // 1 (separate instance)
+console.log("counter1:", counter1()); // 4
+
+// Closure with parameters
+function multiplier(factor: number) {
+    return (x: number) => x * factor;
+}
+
+const double = multiplier(2);
+const triple = multiplier(3);
+
+console.log("double(5):", double(5));
+console.log("triple(5):", triple(5));
+"#,
+        None,
+    )
+    .expect("Closures example should run without error");
+}
+
+#[test]
+fn test_wasm_playground_arrays_example() {
+    // "Arrays" example from WASM playground
+    run(
+        &mut super::create_test_runtime(),
+        r#"
+// Array creation and access
+const numbers = [1, 2, 3, 4, 5];
+const mixed = [1, "two", true, null];
+
+console.log("numbers:", numbers);
+console.log("first:", numbers[0]);
+console.log("length:", numbers.length);
+
+// Array methods
+console.log("\n--- Array Methods ---");
+
+// map - transform each element
+const doubled = numbers.map(x => x * 2);
+console.log("doubled:", doubled);
+
+// filter - keep elements matching condition
+const evens = numbers.filter(x => x % 2 === 0);
+console.log("evens:", evens);
+
+// reduce - accumulate to single value
+const sum = numbers.reduce((acc, x) => acc + x, 0);
+console.log("sum:", sum);
+
+// find - first matching element
+const firstBig = numbers.find(x => x > 3);
+console.log("first > 3:", firstBig);
+
+// some/every - test conditions
+console.log("some > 3:", numbers.some(x => x > 3));
+console.log("every > 0:", numbers.every(x => x > 0));
+
+// forEach
+console.log("\nforEach:");
+numbers.forEach((x, i) => console.log("  [" + i + "] =", x));
+
+// Spread operator
+const more = [...numbers, 6, 7, 8];
+console.log("\nspread:", more);
+
+// Array destructuring
+const [first, second, ...rest] = numbers;
+console.log("first:", first, "second:", second, "rest:", rest);
+"#,
+        None,
+    )
+    .expect("Arrays example should run without error");
+}
+
+#[test]
+fn test_wasm_playground_classes_example() {
+    // "Classes" example from WASM playground
+    run(
+        &mut super::create_test_runtime(),
+        r#"
+// Class declaration
+class Animal {
+    name: string;
+
+    constructor(name: string) {
+        this.name = name;
+    }
+
+    speak(): string {
+        return this.name + " makes a sound";
+    }
+}
+
+// Inheritance
+class Dog extends Animal {
+    breed: string;
+
+    constructor(name: string, breed: string) {
+        super(name);
+        this.breed = breed;
+    }
+
+    speak(): string {
+        return this.name + " barks!";
+    }
+
+    fetch(): string {
+        return this.name + " fetches the ball";
+    }
+}
+
+// Static members
+class MathUtils {
+    static PI = 3.14159;
+
+    static circleArea(radius: number): number {
+        return MathUtils.PI * radius * radius;
+    }
+}
+
+// Usage
+const animal = new Animal("Generic Animal");
+console.log(animal.speak());
+
+const dog = new Dog("Rex", "German Shepherd");
+console.log(dog.speak());
+console.log(dog.fetch());
+console.log("breed:", dog.breed);
+
+console.log("\n--- Static Members ---");
+console.log("PI:", MathUtils.PI);
+console.log("Circle area (r=5):", MathUtils.circleArea(5));
+"#,
+        None,
+    )
+    .expect("Classes example should run without error");
+}
+
+#[test]
+fn test_wasm_playground_typescript_types_example() {
+    // "TypeScript Types" example from WASM playground
+    run(
+        &mut super::create_test_runtime(),
+        r#"
+// Type annotations (parsed but not enforced)
+let num: number = 42;
+let str: string = "hello";
+let bool: boolean = true;
+let arr: number[] = [1, 2, 3];
+
+// Interface declaration
+interface User {
+    id: number;
+    name: string;
+    email?: string; // Optional property
+}
+
+const user: User = {
+    id: 1,
+    name: "Alice",
+    email: "alice@example.com"
+};
+
+console.log("User:", user);
+
+// Type alias
+type StringOrNumber = string | number;
+type Point = { x: number; y: number };
+
+const value: StringOrNumber = 42;
+const point: Point = { x: 10, y: 20 };
+
+console.log("value:", value);
+console.log("point:", point);
+
+// Generic function
+function identity<T>(x: T): T {
+    return x;
+}
+
+console.log("identity(42):", identity(42));
+console.log("identity('hello'):", identity("hello"));
+
+// Enum
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+enum Status {
+    Pending = "pending",
+    Active = "active",
+    Completed = "completed"
+}
+
+console.log("\n--- Enums ---");
+console.log("Color.Red:", Color.Red);
+console.log("Color.Green:", Color.Green);
+console.log("Status.Active:", Status.Active);
+"#,
+        None,
+    )
+    .expect("TypeScript Types example should run without error");
+}

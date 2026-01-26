@@ -70,6 +70,9 @@ pub fn create_promise(interp: &mut Interpreter, guard: &Guard<JsObject>) -> Gc<J
 }
 
 /// Create a new pending promise object linked to an order (for cancellation tracking)
+///
+/// The promise is registered with the interpreter so that when the order is fulfilled,
+/// the promise will be automatically resolved with the order's result value.
 pub fn create_order_promise(
     interp: &mut Interpreter,
     guard: &Guard<JsObject>,
@@ -88,6 +91,14 @@ pub fn create_order_promise(
         o.prototype = Some(interp.promise_prototype.cheap_clone());
         o.exotic = ExoticObject::Promise(state);
     }
+
+    // Register the promise so it's resolved when the order is fulfilled
+    interp
+        .order_promises
+        .entry(order_id)
+        .or_default()
+        .push(obj.cheap_clone());
+
     obj
 }
 
@@ -629,13 +640,23 @@ fn resolve_each_value(
     // Then wrap each value with Promise.resolve
     let mut results = Vec::with_capacity(raw_values.len());
     for val in raw_values {
-        // If already a promise, use it directly
         if let JsValue::Object(obj) = &val {
             let obj_ref = obj.borrow();
+            // If already a promise, use it directly
             if matches!(&obj_ref.exotic, ExoticObject::Promise(_)) {
                 drop(obj_ref);
                 guard.guard(obj.cheap_clone());
                 results.push(val);
+                continue;
+            }
+            // If it's a PendingOrder marker, convert to a pending promise linked to the order.
+            // This allows Promise.all([order(), order()]) to work correctly - the returned
+            // promises will be resolved when the host fulfills each order.
+            if let ExoticObject::PendingOrder { id } = &obj_ref.exotic {
+                let order_id = crate::OrderId(*id);
+                drop(obj_ref);
+                let promise = create_order_promise(interp, &guard, order_id);
+                results.push(JsValue::Object(promise));
                 continue;
             }
         }

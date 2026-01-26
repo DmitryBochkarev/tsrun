@@ -230,7 +230,8 @@ static void eval_and_print(TsRunContext* ctx, const char* code) {
         return;
     }
 
-    TsRunStepResult result = tsrun_run(ctx);
+    TsRunStepResult result;
+    tsrun_run(&result, ctx);
 
     if (result.status == TSRUN_STEP_COMPLETE && result.value) {
         if (tsrun_is_number(result.value)) {

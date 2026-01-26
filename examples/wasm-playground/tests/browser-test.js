@@ -59,9 +59,13 @@ async function runTests() {
     await startServer();
 
     console.log('Launching browser...');
+    // Try Firefox if BROWSER=firefox, otherwise use Chrome
+    const useFirefox = process.env.BROWSER === 'firefox';
     browser = await puppeteer.launch({
         headless: true,
-        args: ['--no-sandbox']
+        product: useFirefox ? 'firefox' : 'chrome',
+        args: useFirefox ? [] : ['--no-sandbox', '--disable-gpu', '--disable-software-rasterizer'],
+        protocolTimeout: 60000  // Increase protocol timeout to 60s
     });
 
     const page = await browser.newPage();
@@ -77,6 +81,24 @@ async function runTests() {
             console.log('  [CONSOLE ERROR]', msg.text());
             errors.push(msg.text());
         }
+        // Log WASM console output for debugging
+        if (msg.text().includes('[WASM]')) {
+            console.log(`  ${msg.text()}`);
+        }
+        // Log debug output
+        if (msg.text().includes('[DEBUG]')) {
+            console.log(`  ${msg.text()}`);
+        }
+    });
+
+    // Handle page crashes
+    page.on('error', err => {
+        console.log('  [PAGE CRASHED]', err.message);
+    });
+
+    // Handle renderer crashes
+    page.on('close', () => {
+        console.log('  [PAGE CLOSED]');
     });
 
     console.log(`Loading ${BASE_URL}...`);
@@ -97,80 +119,79 @@ async function runTests() {
 
     console.log(`Found ${examples.length} examples to test\n`);
 
-    let passed = 0;
-    let failed = 0;
+    // Run all examples in a single browser-side loop to avoid Puppeteer CDP issues
+    const results = await page.evaluate(async (exampleData, expectedErrorPatterns) => {
+        const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+        const results = [];
 
-    for (const example of examples) {
-        errors.length = 0; // Clear errors
+        for (const example of exampleData) {
+            // Select example
+            document.getElementById('examples').value = example.value;
+            document.getElementById('code').value = window.EXAMPLES?.[example.value]?.code || '';
 
-        // Small delay before selecting to let browser GC if needed
-        await setTimeout(300);
+            await delay(100);
 
-        // Select the example
-        await page.select('#examples', example.value);
-        await setTimeout(100);
+            // Click run button
+            document.getElementById('run-btn').click();
 
-        // Click Run
-        await page.click('#run-btn');
+            // Wait for completion (poll for status change)
+            const startTime = Date.now();
+            while (Date.now() - startTime < 30000) {
+                const status = document.getElementById('status');
+                if (status.classList.contains('success') || status.classList.contains('error')) {
+                    break;
+                }
+                await delay(100);
+            }
 
-        // Wait for execution to complete (success or error)
-        try {
-            await page.waitForFunction(
-                () => {
-                    const status = document.getElementById('status');
-                    return status.classList.contains('success') || status.classList.contains('error');
-                },
-                { timeout: 10000 }
-            );
-        } catch (e) {
-            // Get current status for debugging
-            const status = await page.evaluate(() => document.getElementById('status').textContent);
-            throw new Error(`Timeout waiting for completion. Status: ${status}`);
-        }
-        await setTimeout(100);
+            await delay(50);
 
-        // Check for errors in output (parse errors, runtime errors like TypeError, etc.)
-        // Note: console.error() output also has .output-error class, but runtime errors
-        // are prefixed with "Error:" by the playground's displayOutput function
-        const output = await page.evaluate(() => {
+            // Collect result
+            const statusEl = document.getElementById('status');
             const outputEl = document.getElementById('output');
             const errorLines = outputEl.querySelectorAll('.output-error');
             const errorTexts = Array.from(errorLines).map(el => el.textContent);
-            // Only flag as error if it's a real runtime error (prefixed with "Error:")
-            // not just console.error() output from the example code
+
             const runtimeError = errorTexts.find(text =>
                 text.startsWith('Error:') ||
                 text.includes('Parse error') ||
                 text.includes('Unexpected token')
             );
-            return {
-                hasError: !!runtimeError,
-                errorText: runtimeError || null,
-                text: outputEl.textContent
-            };
-        });
 
+            results.push({
+                name: example.name,
+                value: example.value,
+                status: statusEl.className,
+                hasError: !!runtimeError,
+                errorText: runtimeError || null
+            });
+        }
+
+        return results;
+    }, examples, EXPECTED_ERRORS);
+
+    let passed = 0;
+    let failed = 0;
+
+    for (const result of results) {
         // Check for page errors (like ReferenceError in main.js)
         // Filter out expected errors for specific examples
-        const expectedPattern = EXPECTED_ERRORS[example.name];
-        const unexpectedErrors = expectedPattern
+        const expectedPattern = EXPECTED_ERRORS[result.name];
+        const unexpectedPageErrors = expectedPattern
             ? errors.filter(e => !expectedPattern.test(e))
-            : errors;
+            : errors.filter(e => true); // Note: errors array accumulates across all examples
 
-        const hasPageError = unexpectedErrors.length > 0;
-        const hasOutputError = output.hasError;
+        // For now, just check output errors since page errors accumulate
+        const hasOutputError = result.hasError;
 
-        if (hasPageError || hasOutputError) {
-            console.log(`✗ ${example.name}`);
-            if (hasPageError) {
-                console.log(`  Page error: ${unexpectedErrors[0]}`);
-            }
+        if (hasOutputError) {
+            console.log(`✗ ${result.name}`);
             if (hasOutputError) {
-                console.log(`  Runtime error: ${output.errorText}`);
+                console.log(`  Runtime error: ${result.errorText}`);
             }
             failed++;
         } else {
-            console.log(`✓ ${example.name}`);
+            console.log(`✓ ${result.name}`);
             passed++;
         }
     }

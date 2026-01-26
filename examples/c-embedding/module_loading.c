@@ -95,7 +95,8 @@ static const char* load_virtual_file(const char* path) {
 // ============================================================================
 
 static TsRunStepResult run_with_modules(TsRunContext* ctx) {
-    TsRunStepResult result = tsrun_run(ctx);
+    TsRunStepResult result;
+    tsrun_run(&result, ctx);
 
     while (result.status == TSRUN_STEP_NEED_IMPORTS) {
         printf("\n--- Module loader: %zu imports requested ---\n", result.import_count);
@@ -133,7 +134,7 @@ static TsRunStepResult run_with_modules(TsRunContext* ctx) {
         }
 
         tsrun_step_result_free(&result);
-        result = tsrun_run(ctx);
+        tsrun_run(&result, ctx);
     }
 
     return result;

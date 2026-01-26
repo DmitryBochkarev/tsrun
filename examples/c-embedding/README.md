@@ -59,7 +59,8 @@ Demonstrates fundamental operations:
 TsRunContext* ctx = tsrun_new();
 
 TsRunResult prep = tsrun_prepare(ctx, "1 + 2 * 3", NULL);
-TsRunStepResult result = tsrun_run(ctx);
+TsRunStepResult result;
+tsrun_run(&result, ctx);
 
 if (result.status == TSRUN_STEP_COMPLETE) {
     printf("Result: %f\n", tsrun_get_number(result.value));
@@ -101,7 +102,8 @@ Demonstrates handling ES module imports:
 - Accessing module exports from C
 
 ```c
-TsRunStepResult result = tsrun_run(ctx);
+TsRunStepResult result;
+tsrun_run(&result, ctx);
 
 while (result.status == TSRUN_STEP_NEED_IMPORTS) {
     for (size_t i = 0; i < result.import_count; i++) {
@@ -110,7 +112,7 @@ while (result.status == TSRUN_STEP_NEED_IMPORTS) {
         tsrun_provide_module(ctx, path, source);
     }
     tsrun_step_result_free(&result);
-    result = tsrun_run(ctx);
+    tsrun_run(&result, ctx);
 }
 ```
 
@@ -130,7 +132,8 @@ while (result.status == TSRUN_STEP_SUSPENDED) {
         // Create response...
     }
     tsrun_fulfill_orders(ctx, responses, count);
-    result = tsrun_run(ctx);
+    tsrun_step_result_free(&result);
+    tsrun_run(&result, ctx);
 }
 ```
 

@@ -3608,6 +3608,8 @@ fn rule_declare_statement(r: &RuleBuilder) -> Combinator {
 
 fn rule_declare_function(r: &RuleBuilder) -> Combinator {
     // `declare function foo(x: T): R;` - ambient function declaration (no body)
+    // This is a TYPE-ONLY declaration with NO RUNTIME EFFECT.
+    // The function is assumed to exist elsewhere (e.g., as a global from the host).
     r.sequence((
         r.optional(kw(r, "async")),
         kw(r, "function"),
@@ -3621,28 +3623,10 @@ fn rule_declare_function(r: &RuleBuilder) -> Combinator {
         r.parse("semicolon"),
     ))
     .ast(
-        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
-        // [async?, function, *?, name?, type_params?, (, params?, ), return_type?, ;]
-        if let ParseResult::List(parts) = result {
-            let mut iter = parts.into_iter();
-            let async_kw = iter.next().unwrap_or(ParseResult::None);
-            let _function_kw = iter.next(); // skip 'function'
-            let generator = iter.next().unwrap_or(ParseResult::None);
-            let name = iter.next().unwrap_or(ParseResult::None);
-            let _type_params = iter.next(); // skip type params
-            let _open_paren = iter.next(); // skip (
-            let params = iter.next().unwrap_or(ParseResult::None);
-            let _close_paren = iter.next(); // skip )
-            let _return_type = iter.next(); // skip return type
-            // No body for ambient functions - use empty block
-            let body = ParseResult::Stmt(Statement::Block(BlockStatement {
-                body: Rc::from(vec![]),
-                span,
-            }));
-            create_function_decl(async_kw, generator, name, params, body, span)
-        } else {
-            Err(ParseError::new(\"Expected ambient function declaration parts\".to_string(), 0, 0))
-        }
+        "|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        // Ambient function declarations are NO-OP at runtime.
+        // Return Empty statement so no function binding is created.
+        Ok(ParseResult::Stmt(Statement::Empty))
     }",
     )
 }

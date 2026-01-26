@@ -228,9 +228,11 @@ func (c *Context) parsePendingOrders(ptr uint32, count uint32) []Order {
 	}
 
 	// TsRunOrder layout (wasm32):
-	// offset 0: id (u64)
-	// offset 8: payload (i32 pointer to TsRunValue)
-	const structSize = 12 // 8 + 4 on wasm32
+	// offset 0: id (u64, 8 bytes)
+	// offset 8: payload (i32 pointer to TsRunValue, 4 bytes)
+	// offset 12: padding (4 bytes to reach struct alignment of 8)
+	// Total: 16 bytes (struct alignment is 8 due to u64)
+	const structSize = 16
 
 	orders := make([]Order, count)
 	for i := uint32(0); i < count; i++ {

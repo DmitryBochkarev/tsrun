@@ -155,12 +155,13 @@ TsRunResult tsrun_set_console(TsRunContext* ctx, TsRunConsoleFn func, void* user
 TsRunResult tsrun_prepare(TsRunContext* ctx, const char* code, const char* path);
 
 // Execute one step
-// Returns step result - caller must call tsrun_step_result_free when done
-TsRunStepResult tsrun_step(TsRunContext* ctx);
+// Result is written to `out` - caller must call tsrun_step_result_free when done
+void tsrun_step(TsRunStepResult* out, TsRunContext* ctx);
 
 // Run until completion, needing imports, or suspension
 // Equivalent to calling step() in a loop until non-Continue result
-TsRunStepResult tsrun_run(TsRunContext* ctx);
+// Result is written to `out` - caller must call tsrun_step_result_free when done
+void tsrun_run(TsRunStepResult* out, TsRunContext* ctx);
 
 // Free a step result (frees internal arrays, NOT the value)
 void tsrun_step_result_free(TsRunStepResult* result);

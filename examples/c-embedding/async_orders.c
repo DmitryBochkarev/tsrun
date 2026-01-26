@@ -1,9 +1,9 @@
 // async_orders.c - Async order handling example
 //
 // Demonstrates:
-// - Native functions that create pending orders
+// - JavaScript using `await order()` from tsrun:host
 // - Step-based execution with TSRUN_STEP_SUSPENDED
-// - Processing orders from JavaScript
+// - Processing orders (requests from JS)
 // - Fulfilling orders with responses
 // - Error handling in async operations
 
@@ -14,194 +14,7 @@
 #include "tsrun_console.h"
 
 // ============================================================================
-// Native async functions that create pending orders
-// ============================================================================
-
-// Native function: dbQuery(table, id) - creates a pending order
-static TsRunValue* native_db_query(
-    TsRunContext* ctx,
-    TsRunValue* this_arg,
-    TsRunValue** args,
-    size_t argc,
-    void* userdata,
-    const char** error_out
-) {
-    (void)this_arg;
-    (void)userdata;
-
-    // Get arguments
-    const char* table = "unknown";
-    double id = 0;
-
-    if (argc >= 1 && tsrun_is_string(args[0])) {
-        table = tsrun_get_string(args[0]);
-    }
-    if (argc >= 2 && tsrun_is_number(args[1])) {
-        id = tsrun_get_number(args[1]);
-    }
-
-    // Create payload object with order details
-    TsRunValueResult obj_r = tsrun_object_new(ctx);
-    if (!obj_r.value) {
-        *error_out = "Failed to create payload object";
-        return NULL;
-    }
-
-    // Set payload properties
-    TsRunValue* type_val = tsrun_string(ctx, "db_query");
-    TsRunValue* table_val = tsrun_string(ctx, table);
-    TsRunValue* id_val = tsrun_number(ctx, id);
-
-    tsrun_set(ctx, obj_r.value, "type", type_val);
-    tsrun_set(ctx, obj_r.value, "table", table_val);
-    tsrun_set(ctx, obj_r.value, "id", id_val);
-
-    // Create pending order - this will cause the interpreter to suspend
-    TsRunOrderId order_id;
-    TsRunValueResult pending = tsrun_create_pending_order(ctx, obj_r.value, &order_id);
-
-    // Clean up temporary values
-    tsrun_value_free(type_val);
-    tsrun_value_free(table_val);
-    tsrun_value_free(id_val);
-    tsrun_value_free(obj_r.value);
-
-    if (!pending.value) {
-        *error_out = pending.error ? pending.error : "Failed to create pending order";
-        return NULL;
-    }
-
-    return pending.value;
-}
-
-// Native function: httpFetch(url) - creates a pending order
-static TsRunValue* native_http_fetch(
-    TsRunContext* ctx,
-    TsRunValue* this_arg,
-    TsRunValue** args,
-    size_t argc,
-    void* userdata,
-    const char** error_out
-) {
-    (void)this_arg;
-    (void)userdata;
-
-    const char* url = "http://unknown";
-    if (argc >= 1 && tsrun_is_string(args[0])) {
-        url = tsrun_get_string(args[0]);
-    }
-
-    // Create payload
-    TsRunValueResult obj_r = tsrun_object_new(ctx);
-    if (!obj_r.value) {
-        *error_out = "Failed to create payload object";
-        return NULL;
-    }
-
-    TsRunValue* type_val = tsrun_string(ctx, "http_fetch");
-    TsRunValue* url_val = tsrun_string(ctx, url);
-
-    tsrun_set(ctx, obj_r.value, "type", type_val);
-    tsrun_set(ctx, obj_r.value, "url", url_val);
-
-    TsRunOrderId order_id;
-    TsRunValueResult pending = tsrun_create_pending_order(ctx, obj_r.value, &order_id);
-
-    tsrun_value_free(type_val);
-    tsrun_value_free(url_val);
-    tsrun_value_free(obj_r.value);
-
-    if (!pending.value) {
-        *error_out = pending.error ? pending.error : "Failed to create pending order";
-        return NULL;
-    }
-
-    return pending.value;
-}
-
-// Native function: delay(ms) - creates a pending order
-static TsRunValue* native_delay(
-    TsRunContext* ctx,
-    TsRunValue* this_arg,
-    TsRunValue** args,
-    size_t argc,
-    void* userdata,
-    const char** error_out
-) {
-    (void)this_arg;
-    (void)userdata;
-
-    double ms = 0;
-    if (argc >= 1 && tsrun_is_number(args[0])) {
-        ms = tsrun_get_number(args[0]);
-    }
-
-    TsRunValueResult obj_r = tsrun_object_new(ctx);
-    if (!obj_r.value) {
-        *error_out = "Failed to create payload object";
-        return NULL;
-    }
-
-    TsRunValue* type_val = tsrun_string(ctx, "timeout");
-    TsRunValue* ms_val = tsrun_number(ctx, ms);
-
-    tsrun_set(ctx, obj_r.value, "type", type_val);
-    tsrun_set(ctx, obj_r.value, "ms", ms_val);
-
-    TsRunOrderId order_id;
-    TsRunValueResult pending = tsrun_create_pending_order(ctx, obj_r.value, &order_id);
-
-    tsrun_value_free(type_val);
-    tsrun_value_free(ms_val);
-    tsrun_value_free(obj_r.value);
-
-    if (!pending.value) {
-        *error_out = pending.error ? pending.error : "Failed to create pending order";
-        return NULL;
-    }
-
-    return pending.value;
-}
-
-// Native function: errorTest() - creates a pending order that will be rejected
-static TsRunValue* native_error_test(
-    TsRunContext* ctx,
-    TsRunValue* this_arg,
-    TsRunValue** args,
-    size_t argc,
-    void* userdata,
-    const char** error_out
-) {
-    (void)this_arg;
-    (void)args;
-    (void)argc;
-    (void)userdata;
-
-    TsRunValueResult obj_r = tsrun_object_new(ctx);
-    if (!obj_r.value) {
-        *error_out = "Failed to create payload object";
-        return NULL;
-    }
-
-    TsRunValue* type_val = tsrun_string(ctx, "error_test");
-    tsrun_set(ctx, obj_r.value, "type", type_val);
-
-    TsRunOrderId order_id;
-    TsRunValueResult pending = tsrun_create_pending_order(ctx, obj_r.value, &order_id);
-
-    tsrun_value_free(type_val);
-    tsrun_value_free(obj_r.value);
-
-    if (!pending.value) {
-        *error_out = pending.error ? pending.error : "Failed to create pending order";
-        return NULL;
-    }
-
-    return pending.value;
-}
-
-// ============================================================================
-// Simulated async operations
+// Simulated async operations (host-side implementations)
 // ============================================================================
 
 static TsRunValue* simulate_db_query(TsRunContext* ctx, const char* table, int id) {
@@ -230,7 +43,8 @@ static TsRunValue* simulate_http_fetch(TsRunContext* ctx, const char* url) {
 
 static TsRunValue* simulate_timeout(TsRunContext* ctx, double ms) {
     printf("    [C] Simulating timeout: %.0f ms\n", ms);
-    return tsrun_undefined(ctx);
+    (void)ctx;
+    return NULL; // Returns undefined
 }
 
 // ============================================================================
@@ -245,7 +59,7 @@ static TsRunStepResult process_orders(TsRunContext* ctx, TsRunStepResult result)
         if (result.pending_count == 0) {
             // No orders to process, continue running
             tsrun_step_result_free(&result);
-            result = tsrun_run(ctx);
+            tsrun_run(&result, ctx);
             continue;
         }
 
@@ -267,7 +81,7 @@ static TsRunStepResult process_orders(TsRunContext* ctx, TsRunStepResult result)
 
             printf("\n  Processing order #%llu:\n", (unsigned long long)order->id);
 
-            // Get order type
+            // Get order type from payload
             TsRunValueResult type_r = tsrun_get(ctx, order->payload, "type");
             if (!type_r.value || !tsrun_is_string(type_r.value)) {
                 responses[i].value = NULL;
@@ -352,39 +166,10 @@ static TsRunStepResult process_orders(TsRunContext* ctx, TsRunStepResult result)
 
         // Continue execution
         tsrun_step_result_free(&result);
-        result = tsrun_run(ctx);
+        tsrun_run(&result, ctx);
     }
 
     return result;
-}
-
-// ============================================================================
-// Helper to set up context with native async functions
-// ============================================================================
-
-static void setup_async_functions(TsRunContext* ctx) {
-    // Register native async functions as globals
-    TsRunValueResult dbQuery = tsrun_native_function(ctx, "dbQuery", native_db_query, 2, NULL);
-    TsRunValueResult httpFetch = tsrun_native_function(ctx, "httpFetch", native_http_fetch, 1, NULL);
-    TsRunValueResult delay = tsrun_native_function(ctx, "delay", native_delay, 1, NULL);
-    TsRunValueResult errorTest = tsrun_native_function(ctx, "errorTest", native_error_test, 0, NULL);
-
-    if (dbQuery.value) {
-        tsrun_set_global(ctx, "dbQuery", dbQuery.value);
-        tsrun_value_free(dbQuery.value);
-    }
-    if (httpFetch.value) {
-        tsrun_set_global(ctx, "httpFetch", httpFetch.value);
-        tsrun_value_free(httpFetch.value);
-    }
-    if (delay.value) {
-        tsrun_set_global(ctx, "delay", delay.value);
-        tsrun_value_free(delay.value);
-    }
-    if (errorTest.value) {
-        tsrun_set_global(ctx, "errorTest", errorTest.value);
-        tsrun_value_free(errorTest.value);
-    }
 }
 
 // ============================================================================
@@ -400,9 +185,6 @@ static void run_async_code(const char* title, const char* code) {
     TsRunContext* ctx = tsrun_new();
     tsrun_set_console(ctx, tsrun_console_stdio, NULL);
 
-    // Set up native async functions
-    setup_async_functions(ctx);
-
     // Run the code
     TsRunResult prep = tsrun_prepare(ctx, code, "/main.ts");
     if (!prep.ok) {
@@ -411,7 +193,8 @@ static void run_async_code(const char* title, const char* code) {
         return;
     }
 
-    TsRunStepResult result = tsrun_run(ctx);
+    TsRunStepResult result;
+    tsrun_run(&result, ctx);
     result = process_orders(ctx, result);
 
     if (result.status == TSRUN_STEP_COMPLETE) {
@@ -443,23 +226,28 @@ static void run_async_code(const char* title, const char* code) {
 }
 
 // ============================================================================
-// Examples
+// Examples - Using order() from tsrun:host
 // ============================================================================
 
 static void example_basic_async(void) {
     run_async_code(
-        "Example 1: Basic sync call (order creates immediate suspension)",
+        "Example 1: Basic async operation",
+        "import { order } from 'tsrun:host';\n"
+        "\n"
         "interface DbResult {\n"
         "    id: number;\n"
         "    table: string;\n"
         "    data: string;\n"
         "}\n"
         "\n"
-        "declare function dbQuery(table: string, id: number): DbResult;\n"
+        "// Helper function that creates an order for DB query\n"
+        "async function dbQuery(table: string, id: number): Promise<DbResult> {\n"
+        "    return await order({ type: 'db_query', table, id });\n"
+        "}\n"
         "\n"
         "console.log('Starting...');\n"
         "\n"
-        "const user: DbResult = dbQuery('users', 42);\n"
+        "const user = await dbQuery('users', 42);\n"
         "console.log('Got user:', JSON.stringify(user));\n"
         "\n"
         "user;\n"
@@ -469,6 +257,8 @@ static void example_basic_async(void) {
 static void example_multiple_calls(void) {
     run_async_code(
         "Example 2: Multiple sequential calls",
+        "import { order } from 'tsrun:host';\n"
+        "\n"
         "interface DbResult {\n"
         "    id: number;\n"
         "    table: string;\n"
@@ -481,18 +271,23 @@ static void example_multiple_calls(void) {
         "    body: string;\n"
         "}\n"
         "\n"
-        "declare function dbQuery(table: string, id: number): DbResult;\n"
-        "declare function httpFetch(url: string): HttpResponse;\n"
+        "async function dbQuery(table: string, id: number): Promise<DbResult> {\n"
+        "    return await order({ type: 'db_query', table, id });\n"
+        "}\n"
+        "\n"
+        "async function httpFetch(url: string): Promise<HttpResponse> {\n"
+        "    return await order({ type: 'http_fetch', url });\n"
+        "}\n"
         "\n"
         "console.log('Fetching data...');\n"
         "\n"
-        "const user: DbResult = dbQuery('users', 1);\n"
+        "const user = await dbQuery('users', 1);\n"
         "console.log('User:', JSON.stringify(user));\n"
         "\n"
-        "const posts: DbResult = dbQuery('posts', 100);\n"
+        "const posts = await dbQuery('posts', 100);\n"
         "console.log('Posts:', JSON.stringify(posts));\n"
         "\n"
-        "const config: HttpResponse = httpFetch('https://api.example.com/config');\n"
+        "const config = await httpFetch('https://api.example.com/config');\n"
         "console.log('Config:', JSON.stringify(config));\n"
         "\n"
         "({ user, posts, config });\n"
@@ -502,12 +297,12 @@ static void example_multiple_calls(void) {
 static void example_error_handling(void) {
     run_async_code(
         "Example 3: Error handling",
-        "declare function errorTest(): never;\n"
+        "import { order } from 'tsrun:host';\n"
         "\n"
         "console.log('Attempting operation that will fail...');\n"
         "\n"
         "try {\n"
-        "    const result: never = errorTest();\n"
+        "    const result = await order({ type: 'error_test' });\n"
         "    console.log('Result:', result);\n"
         "} catch (e: unknown) {\n"
         "    const error = e as Error;\n"
@@ -521,19 +316,23 @@ static void example_error_handling(void) {
 static void example_loop(void) {
     run_async_code(
         "Example 4: Orders in a loop",
+        "import { order } from 'tsrun:host';\n"
+        "\n"
         "interface DbResult {\n"
         "    id: number;\n"
         "    table: string;\n"
         "    data: string;\n"
         "}\n"
         "\n"
-        "declare function dbQuery(table: string, id: number): DbResult;\n"
+        "async function dbQuery(table: string, id: number): Promise<DbResult> {\n"
+        "    return await order({ type: 'db_query', table, id });\n"
+        "}\n"
         "\n"
         "const results: DbResult[] = [];\n"
         "\n"
         "for (let i: number = 1; i <= 3; i++) {\n"
         "    console.log(`Fetching item ${i}...`);\n"
-        "    const item: DbResult = dbQuery('items', i);\n"
+        "    const item = await dbQuery('items', i);\n"
         "    results.push(item);\n"
         "}\n"
         "\n"
@@ -552,9 +351,9 @@ int main(void) {
     printf("This example demonstrates how the host (C code) handles\n");
     printf("async operations from JavaScript via the order system.\n");
     printf("\n");
-    printf("Native functions create pending orders, which cause the\n");
-    printf("interpreter to suspend. The host then fulfills these orders\n");
-    printf("and the interpreter resumes with the results.\n");
+    printf("JavaScript code uses `await order({ type: ... })` from tsrun:host.\n");
+    printf("The interpreter suspends, and the host fulfills orders with\n");
+    printf("simulated responses (DB queries, HTTP fetches, etc.).\n");
 
     example_basic_async();
     example_multiple_calls();

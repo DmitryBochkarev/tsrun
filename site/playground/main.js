@@ -139,7 +139,7 @@ async function runCode() {
     setStatus('loading', 'Running...');
     runBtn.disabled = true;
 
-    // Create fresh runner for each execution
+    // Create a fresh runner for each execution
     if (runner) {
         runner.free();
     }
@@ -156,14 +156,18 @@ async function runCode() {
             return;
         }
 
-        // Main execution loop - JS controls everything
+        // Main execution loop using run() for efficiency
+        // run() executes until completion/suspension in one call
         while (true) {
-            const result = runner.step();
+            const result = runner.run();
             displayConsole(result.console_output);
 
             switch (result.status) {
                 case StepStatus.CONTINUE:
-                    continue;
+                    // run() should not return CONTINUE, but handle it
+                    appendOutput('error', 'Unexpected CONTINUE from run()');
+                    setStatus('error', 'Error');
+                    return;
 
                 case StepStatus.COMPLETE:
                     displayResultValue(result.value_handle);
@@ -186,6 +190,7 @@ async function runCode() {
                     return;
 
                 case StepStatus.SUSPENDED:
+                    // Handle async operations
                     const orderIds = runner.get_pending_order_ids();
                     if (orderIds.length > 0) {
                         // Handle orders by returning unresolved Promises immediately
@@ -442,33 +447,9 @@ console.log("counter:", counter);`
 
     'functions': {
         name: 'Functions',
-        code: `// Regular function declaration
-function greet(name: string): string {
-    return "Hello, " + name + "!";
-}
-
-// Arrow function
-const add = (a: number, b: number): number => a + b;
-
-// Function with default parameters
-function power(base: number, exponent: number = 2): number {
-    let result = 1;
-    for (let i = 0; i < exponent; i++) {
-        result *= base;
-    }
-    return result;
-}
-
-// Rest parameters
-function sum(...numbers: number[]): number {
-    return numbers.reduce((acc, n) => acc + n, 0);
-}
-
-console.log(greet("TypeScript"));
-console.log("2 + 3 =", add(2, 3));
-console.log("5^3 =", power(5, 3));
-console.log("5^2 =", power(5)); // Uses default exponent
-console.log("sum(1,2,3,4,5) =", sum(1, 2, 3, 4, 5));`
+        code: `// Empty function
+function f() {}
+console.log("Done");`
     },
 
     'closures': {
