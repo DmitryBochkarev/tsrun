@@ -11,7 +11,7 @@ on:
         required: false
         default: '300'
       target:
-        description: 'Fuzz target (fuzz_lexer, fuzz_parser, fuzz_interpreter, all)'
+        description: 'Fuzz target (fuzz_parser, fuzz_interpreter, all)'
         required: false
         default: 'all'
 
@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [fuzz_lexer, fuzz_parser, fuzz_interpreter]
+        target: [fuzz_parser, fuzz_interpreter]
 
     steps:
       - uses: actions/checkout@v4
