@@ -39,7 +39,7 @@ cd examples/wasm-playground && ./build.sh --test             # Build and run pla
 
 To debug:
 1. Use binary search to find the failing test: `timeout 20 cargo test test_name`
-2. Once found, the issue is likely in the grammar (`grammar/src/lib.rs`)
+2. Once found, the issue is likely in the grammar (`src/grammar.rs`)
 3. Add a minimal reproduction test to `trampoline-parser-tests/`
 4. Fix the issue in `trampoline-parser/` with proper loop detection
 
@@ -67,7 +67,7 @@ Common causes of infinite loops in trampoline-parser:
 | `tests/interpreter/` | Integration tests by feature |
 | `trampoline-parser/` | Parser generator DSL for scannerless parsing |
 | `trampoline-parser-tests/` | Integration tests for trampoline-parser |
-| `grammar/` | TypeScript grammar definition using trampoline-parser |
+| `src/grammar.rs` | TypeScript grammar definition using trampoline-parser |
 | `examples/c-embedding/` | C API usage examples |
 | `examples/wasm-playground/` | WASM browser/Node.js playground |
 | `examples/go-wazero/` | Go embedding via WASM (wazero) |
@@ -310,7 +310,7 @@ A DSL for generating scannerless, trampoline-based parsers. Uses iterative work 
 | `trampoline-parser/src/codegen.rs` | Rust code generator |
 | `trampoline-parser/src/ir.rs` | Intermediate representation |
 | `trampoline-parser-tests/` | Integration test crate |
-| `grammar/` | TypeScript grammar using the DSL |
+| `src/grammar.rs` | TypeScript grammar using the DSL |
 
 ### Usage
 

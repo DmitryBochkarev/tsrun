@@ -1,7 +1,9 @@
 // Build scripts are allowed to panic on error - a failed build script should stop the build
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use tsrun_grammar::typescript_grammar;
+#[path = "src/grammar.rs"]
+mod grammar;
+use grammar::typescript_grammar;
 
 fn main() {
     let grammar = typescript_grammar();
@@ -16,7 +18,7 @@ fn main() {
     let dest = std::path::Path::new(&out_dir).join("parser_generated.rs");
     std::fs::write(&dest, code).expect("Failed to write parser_generated.rs");
 
-    println!("cargo:rerun-if-changed=grammar/src/lib.rs");
+    println!("cargo:rerun-if-changed=src/grammar.rs");
     println!("cargo:rerun-if-changed=trampoline-parser/src/codegen.rs");
     println!("cargo:rerun-if-changed=build.rs");
 }

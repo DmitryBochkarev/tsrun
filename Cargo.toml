@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "trampoline-parser", "trampoline-parser-tests", "grammar"]
+members = [".", "trampoline-parser", "trampoline-parser-tests"]
 exclude = ["fuzz"]
 
 [package]
@@ -93,4 +93,4 @@ debug = true
 strip = false
 
 [build-dependencies]
-tsrun-grammar = { path = "grammar" }
+trampoline-parser = { path = "trampoline-parser" }
