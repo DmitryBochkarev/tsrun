@@ -92,7 +92,7 @@ Common causes of infinite loops in trampoline-parser:
 1. Write failing test in `tests/parser.rs` or `tests/interpreter/`
 2. Implement minimal code to pass
 3. Refactor while keeping tests green
-4. Run `cargo test && cargo fmt && cargo clippy` before committing
+4. Run `cargo test && cargo fmt && cargo clippy --all-targets --all-features -- -D warnings` before committing
 
 **Note:** The parser is currently being rewritten to be fully non-recursive (stack-based). See `my/new_parser.md` for the implementation plan.
 
