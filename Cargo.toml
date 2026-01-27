@@ -8,6 +8,7 @@ version = "0.1.17"
 edition = "2024"
 description = "A TypeScript interpreter designed for embedding in applications"
 license = "MIT"
+repository = "https://github.com/DmitryBochkarev/tsrun"
 keywords = ["typescript", "javascript", "interpreter", "embedding"]
 categories = ["parser-implementations"]
 
