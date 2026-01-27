@@ -213,7 +213,8 @@ pub fn grammar() -> CompiledGrammar {
                     // Postfix operators (highest binding)
                     .postfix_call("(", ")", ",", 18, "|callee, args, _| Ok(call_expr(callee, args))")
                     .postfix_index("[", "]", 18, "|obj, idx, _| Ok(make_index(obj, idx))")
-                    .postfix_member(".", 18, "|obj, prop, _| Ok(member_expr(obj, prop))")
+                    // Use pattern to prevent matching ".." as member access
+                    .postfix_member_pattern(r.sequence((r.lit("."), r.not_followed_by(r.char('.')))), 18, "|obj, prop, _| Ok(member_expr(obj, prop))")
 
                     // Power (right-associative, very high precedence)
                     .infix(r.sequence((r.parse("ws"), r.lit("^"))), 12, Assoc::Right, "|l, r, _| Ok(binary_expr(l, r, BinOp::Pow))")
@@ -309,7 +310,8 @@ pub fn grammar() -> CompiledGrammar {
                 ops
                     .postfix_call("(", ")", ",", 18, "|callee, args, _| Ok(call_expr(callee, args))")
                     .postfix_index("[", "]", 18, "|obj, idx, _| Ok(make_index(obj, idx))")
-                    .postfix_member(".", 18, "|obj, prop, _| Ok(member_expr(obj, prop))")
+                    // Use pattern to prevent matching ".." as member access
+                    .postfix_member_pattern(r.sequence((r.lit("."), r.not_followed_by(r.char('.')))), 18, "|obj, prop, _| Ok(member_expr(obj, prop))")
             })
         })
 

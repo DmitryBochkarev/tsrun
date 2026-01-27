@@ -548,6 +548,23 @@ impl PrattBuilder {
         self
     }
 
+    /// Define a member access postfix with a custom pattern
+    /// Use this when you need not_followed_by constraints
+    /// Example: `ops.postfix_member_pattern(r.sequence((r.lit("."), r.not_followed_by(r.char('.')))), 18, "|obj, prop| member(obj, prop)")`
+    pub fn postfix_member_pattern(
+        mut self,
+        pattern: Combinator,
+        precedence: u8,
+        mapping: &str,
+    ) -> Self {
+        self.postfix_ops.push(PostfixOp::Member {
+            pattern: Box::new(pattern),
+            precedence,
+            mapping: mapping.to_string(),
+        });
+        self
+    }
+
     /// Define a rule-based postfix: parses another rule as the suffix
     /// Used for tagged template literals: tag`template`
     /// Example: `ops.postfix_rule("template_literal", 18, "|tag, template| tagged_template(tag, template)")`

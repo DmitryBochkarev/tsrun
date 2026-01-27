@@ -179,7 +179,7 @@ fn span_after_newlines() {
     if let json_parser::ParseResult::Json(json_parser::JsonValue::Number(_)) = result {
         // Just verify it parses - the span tracking for JSON is internal
     } else {
-        panic!("Expected Number result");
+        panic!("Expected Number result, got {:?}", result);
     }
 }
 

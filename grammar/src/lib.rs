@@ -618,11 +618,13 @@ fn parse_result_to_argument(result: ParseResult) -> Result<Argument, ParseError>
 
 /// Create member expression (property is JsString from postfix_member)
 fn member(obj: ParseResult, prop: JsString, optional: bool, span: Span) -> Result<ParseResult, ParseError> {
+    // Decode unicode escapes in property name (e.g., b\u0061r -> bar)
+    let decoded_prop = decode_identifier(&prop);
     // Check if this is a private name (starts with #)
-    let property = if prop.as_str().starts_with('#') {
-        MemberProperty::PrivateIdentifier(Identifier { name: prop, span: span.clone() })
+    let property = if decoded_prop.as_str().starts_with('#') {
+        MemberProperty::PrivateIdentifier(Identifier { name: decoded_prop, span: span.clone() })
     } else {
-        MemberProperty::Identifier(Identifier { name: prop, span: span.clone() })
+        MemberProperty::Identifier(Identifier { name: decoded_prop, span: span.clone() })
     };
     let member_expr = Expression::Member(Box::new(MemberExpression {
         object: Rc::new(to_expr(obj)?),

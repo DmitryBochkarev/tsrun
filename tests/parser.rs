@@ -3607,9 +3607,30 @@ fn test_new_member_expression_callee() {
 // Regression: unicode escape in member access property name
 #[test]
 fn test_unicode_escape_member_property() {
+    use tsrun::ast::{Expression, MemberProperty, Statement};
     // obj.b\u0061r should parse as obj.bar (member access with unicode escape in property)
     let prog = parse("obj.b\\u0061r");
     assert_eq!(prog.body.len(), 1);
+    // Verify the property name is correctly decoded
+    if let Statement::Expression(stmt) = &prog.body[0] {
+        if let Expression::Member(member) = &*stmt.expression {
+            if let MemberProperty::Identifier(id) = &member.property {
+                // The raw text is "b\u0061r", which should decode to "bar"
+                // Currently checking what we get
+                assert_eq!(
+                    id.name, "bar",
+                    "Unicode escape b\\u0061r should decode to 'bar', got '{}'",
+                    id.name
+                );
+            } else {
+                panic!("Expected Identifier property, got {:?}", member.property);
+            }
+        } else {
+            panic!("Expected Member expression, got {:?}", stmt.expression);
+        }
+    } else {
+        panic!("Expected ExpressionStatement");
+    }
 }
 
 // Regression: double underscore identifier was parsed as NaN + identifier
@@ -3803,4 +3824,26 @@ fn test_nested_angle_brackets_in_types() {
         "Fuzz artifact 2 should parse in <1s, took {:?}",
         duration
     );
+}
+
+// Regression: Single-character operators like "=" must not match multi-character operators like "=="
+// The not_followed_by pattern on "=" prevents it from matching "==" or "==="
+#[test]
+fn test_equality_operators() {
+    // These all failed before the not_followed_by fix for Literal patterns
+    let prog = parse("1 == 1");
+    assert_eq!(prog.body.len(), 1, "1 == 1 should parse as 1 statement");
+
+    let prog = parse("1 === 1");
+    assert_eq!(prog.body.len(), 1, "1 === 1 should parse as 1 statement");
+
+    let prog = parse("1 << 2");
+    assert_eq!(prog.body.len(), 1, "1 << 2 should parse as 1 statement");
+
+    let prog = parse("1 >> 2");
+    assert_eq!(prog.body.len(), 1, "1 >> 2 should parse as 1 statement");
+
+    // This was the original failing case with type assertions
+    let prog = parse("(1 as number) === (1 as number)");
+    assert_eq!(prog.body.len(), 1, "Should parse as 1 expression statement");
 }

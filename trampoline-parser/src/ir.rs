@@ -298,3 +298,340 @@ impl AstConfig {
         Self::default()
     }
 }
+
+// ============================================================================
+// Indexed IR types for state-indexed code generation
+// ============================================================================
+
+/// ID types for indexing combinators in generated code.
+/// Using u16 to keep Work enum variants compact while supporting up to 65535 combinators.
+pub type RuleId = u16;
+pub type SeqId = u16;
+pub type ChoiceId = u16;
+pub type LoopId = u16;
+pub type OptId = u16;
+pub type CapId = u16;
+pub type LookId = u16;
+pub type SkipId = u16;
+pub type SepById = u16;
+pub type PrattId = u16;
+pub type MapId = u16;
+pub type MemoId = u16;
+pub type LitId = u16;
+
+/// Reference to a combinator by its type and index.
+/// Used in generated static tables to reference child combinators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CombRef {
+    /// Reference to a rule
+    Rule(RuleId),
+    /// Reference to a sequence
+    Seq(SeqId),
+    /// Reference to a choice
+    Choice(ChoiceId),
+    /// Reference to zero-or-more loop
+    ZeroOrMore(LoopId),
+    /// Reference to one-or-more loop
+    OneOrMore(LoopId),
+    /// Reference to optional
+    Optional(OptId),
+    /// Reference to a literal
+    Literal(LitId),
+    /// Match a character class
+    CharClass(CharClass),
+    /// Match a character range
+    CharRange(char, char),
+    /// Match a single specific character
+    Char(char),
+    /// Match any character
+    AnyChar,
+    /// Reference to a capture
+    Capture(CapId),
+    /// Reference to not-followed-by lookahead
+    NotFollowedBy(LookId),
+    /// Reference to followed-by lookahead
+    FollowedBy(LookId),
+    /// Reference to a skip
+    Skip(SkipId),
+    /// Reference to separated-by
+    SeparatedBy(SepById),
+    /// Reference to Pratt expression parser
+    Pratt(PrattId),
+    /// Reference to a mapped combinator
+    Mapped(MapId),
+    /// Reference to a memoized combinator
+    Memoize(MemoId),
+}
+
+/// Compiled sequence definition for generated code
+#[derive(Debug, Clone)]
+pub struct CompiledSeqDef {
+    /// References to child combinators
+    pub items: Vec<CombRef>,
+}
+
+/// Compiled choice definition for generated code
+#[derive(Debug, Clone)]
+pub struct CompiledChoiceDef {
+    /// References to alternative combinators
+    pub alts: Vec<CombRef>,
+}
+
+/// Compiled loop definition for generated code (used by ZeroOrMore and OneOrMore)
+#[derive(Debug, Clone)]
+pub struct CompiledLoopDef {
+    /// Reference to the item combinator
+    pub item: CombRef,
+}
+
+/// Compiled optional definition for generated code
+#[derive(Debug, Clone)]
+pub struct CompiledOptDef {
+    /// Reference to the inner combinator
+    pub inner: CombRef,
+}
+
+/// Compiled capture definition for generated code
+#[derive(Debug, Clone)]
+pub struct CompiledCapDef {
+    /// Reference to the inner combinator
+    pub inner: CombRef,
+}
+
+/// Compiled lookahead definition (for NotFollowedBy and FollowedBy)
+#[derive(Debug, Clone)]
+pub struct CompiledLookDef {
+    /// Reference to the inner combinator
+    pub inner: CombRef,
+}
+
+/// Compiled skip definition
+#[derive(Debug, Clone)]
+pub struct CompiledSkipDef {
+    /// Reference to the inner combinator
+    pub inner: CombRef,
+}
+
+/// Compiled separated-by definition
+#[derive(Debug, Clone)]
+pub struct CompiledSepByDef {
+    /// Reference to the item combinator
+    pub item: CombRef,
+    /// Reference to the separator combinator
+    pub separator: CombRef,
+    /// Whether trailing separator is allowed
+    pub trailing: bool,
+}
+
+/// Compiled mapped combinator definition
+#[derive(Debug, Clone)]
+pub struct CompiledMapDef {
+    /// Reference to the inner combinator
+    pub inner: CombRef,
+    /// Index into the mapping function array
+    pub mapping_idx: usize,
+}
+
+/// Compiled memoize definition
+#[derive(Debug, Clone)]
+pub struct CompiledMemoDef {
+    /// The memoization ID (same as Combinator::Memoize::id)
+    pub memo_id: usize,
+    /// Reference to the inner combinator
+    pub inner: CombRef,
+}
+
+/// Compiled rule definition
+#[derive(Debug, Clone)]
+pub struct CompiledRuleDef {
+    /// Rule name
+    pub name: String,
+    /// Reference to the rule's top-level combinator
+    pub entry: CombRef,
+}
+
+/// Information extracted from an operator pattern
+#[derive(Debug, Clone)]
+pub struct PatternInfo {
+    /// The literal operator string (e.g., "+", "===")
+    pub literal: String,
+    /// Whether this is a keyword (needs word boundary check)
+    pub is_keyword: bool,
+    /// Strings that must NOT follow the operator (e.g., "=" for "=" to not match "==")
+    pub not_followed_by: Vec<String>,
+    /// Optional leading rule to parse (e.g., whitespace)
+    pub leading_rule: Option<String>,
+}
+
+/// Compiled prefix operator
+#[derive(Debug, Clone)]
+pub struct CompiledPrefixOp {
+    /// Pattern information
+    pub pattern: PatternInfo,
+    /// Precedence level
+    pub precedence: u8,
+    /// Index into prefix mapping function array
+    pub mapping_idx: usize,
+}
+
+/// Compiled infix operator
+#[derive(Debug, Clone)]
+pub struct CompiledInfixOp {
+    /// Pattern information
+    pub pattern: PatternInfo,
+    /// Precedence level
+    pub precedence: u8,
+    /// Associativity
+    pub assoc: Assoc,
+    /// Index into infix mapping function array
+    pub mapping_idx: usize,
+}
+
+/// Compiled postfix operator
+#[derive(Debug, Clone)]
+pub enum CompiledPostfixOp {
+    /// Simple postfix (++, --)
+    Simple {
+        pattern: PatternInfo,
+        precedence: u8,
+        mapping_idx: usize,
+    },
+    /// Call expression: callee(args)
+    Call {
+        open_lit: String,
+        close_lit: String,
+        sep_lit: String,
+        /// Optional rule to parse for arguments
+        arg_rule: Option<RuleId>,
+        precedence: u8,
+        mapping_idx: usize,
+    },
+    /// Index expression: obj[index]
+    Index {
+        open_lit: String,
+        close_lit: String,
+        precedence: u8,
+        mapping_idx: usize,
+    },
+    /// Member access: obj.prop
+    Member {
+        pattern: PatternInfo,
+        precedence: u8,
+        mapping_idx: usize,
+    },
+    /// Rule-based postfix
+    Rule {
+        rule_id: RuleId,
+        precedence: u8,
+        mapping_idx: usize,
+    },
+}
+
+/// Compiled ternary operator
+#[derive(Debug, Clone)]
+pub struct CompiledTernaryOp {
+    /// First operator literal (e.g., "?")
+    pub first_lit: String,
+    /// Second operator literal (e.g., ":")
+    pub second_lit: String,
+    /// Precedence level
+    pub precedence: u8,
+    /// Index into ternary mapping function array
+    pub mapping_idx: usize,
+}
+
+/// Compiled Pratt expression parser definition
+#[derive(Debug, Clone)]
+pub struct CompiledPrattDef {
+    /// Reference to the operand combinator
+    pub operand: Option<CombRef>,
+    /// Compiled prefix operators
+    pub prefix_ops: Vec<CompiledPrefixOp>,
+    /// Compiled infix operators
+    pub infix_ops: Vec<CompiledInfixOp>,
+    /// Compiled postfix operators
+    pub postfix_ops: Vec<CompiledPostfixOp>,
+    /// Compiled ternary operator (if any)
+    pub ternary: Option<CompiledTernaryOp>,
+    /// Whether any infix operator has a leading rule
+    pub has_infix_with_leading: bool,
+    /// Whether any prefix operator has a leading rule
+    pub has_prefix_with_leading: bool,
+}
+
+/// Compact position info for Pratt parsing work items
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PosInfo {
+    pub start_pos: usize,
+    pub start_line: u32,
+    pub start_column: u32,
+}
+
+/// Postfix variant tag for work items
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostfixVariant {
+    Simple,
+    Call,
+    Index,
+    Member,
+    Rule,
+}
+
+/// Ternary stage for work items
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TernaryStage {
+    First,
+    Second,
+}
+
+/// Leading rule context for Pratt work items
+#[derive(Debug, Clone, Copy)]
+pub enum LeadingRuleContext {
+    Prefix,
+    Infix {
+        op_idx: u8,
+        next_prec: u8,
+        checkpoint: usize,
+    },
+}
+
+/// Index of all combinators in the grammar
+#[derive(Debug, Clone, Default)]
+pub struct CombinatorIndex {
+    /// Compiled rules
+    pub rules: Vec<CompiledRuleDef>,
+    /// Map from rule name to rule ID
+    pub rule_map: std::collections::HashMap<String, RuleId>,
+    /// Compiled sequences
+    pub sequences: Vec<CompiledSeqDef>,
+    /// Compiled choices
+    pub choices: Vec<CompiledChoiceDef>,
+    /// Compiled zero-or-more loops
+    pub zero_or_more: Vec<CompiledLoopDef>,
+    /// Compiled one-or-more loops
+    pub one_or_more: Vec<CompiledLoopDef>,
+    /// Compiled optionals
+    pub optionals: Vec<CompiledOptDef>,
+    /// Compiled captures
+    pub captures: Vec<CompiledCapDef>,
+    /// Compiled not-followed-by lookaheads
+    pub not_followed_by: Vec<CompiledLookDef>,
+    /// Compiled followed-by lookaheads
+    pub followed_by: Vec<CompiledLookDef>,
+    /// Compiled skips
+    pub skips: Vec<CompiledSkipDef>,
+    /// Compiled separated-by
+    pub separated_by: Vec<CompiledSepByDef>,
+    /// Compiled Pratt parsers
+    pub pratts: Vec<CompiledPrattDef>,
+    /// Compiled mapped combinators
+    pub mapped: Vec<CompiledMapDef>,
+    /// Compiled memoized combinators
+    pub memoized: Vec<CompiledMemoDef>,
+    /// Unique literals
+    pub literals: Vec<String>,
+    /// Map from literal string to literal ID
+    pub literal_map: std::collections::HashMap<String, LitId>,
+    /// Mapping function strings (code snippets)
+    pub mappings: Vec<String>,
+}
