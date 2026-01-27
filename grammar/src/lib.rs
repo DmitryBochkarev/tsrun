@@ -4723,7 +4723,6 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
         r.parse("literal"),
         r.parse("this_expression"),
         r.parse("super_expression"),
-        // Memoized to avoid exponential backtracking on inputs with many [ characters
         r.memoize(3, r.parse("array_expression")),
         r.parse("object_expression"),
         r.parse("function_expression"),
@@ -4733,16 +4732,13 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
         r.parse("yield_expression"),
         // arrow_function before parenthesized - both start with ( but arrow needs => lookahead
         // Arrow function will fail if no => follows, then parenthesized will match
-        // Memoized to avoid exponential backtracking on inputs with many ( characters
         r.memoize(2, r.parse("arrow_function")),
         r.parse("parenthesized"),
         // angle_bracket_assertion for TypeScript <Type>expr syntax
         // Must come before generic_call_expression since it starts with < directly
-        // Memoized to avoid exponential backtracking on inputs with many < characters
         r.memoize(4, r.parse("angle_bracket_assertion")),
         // generic_call_expression before identifier - matches foo<T>(args)
         // Will fail and backtrack if not followed by proper type args and call
-        // Memoized to avoid exponential backtracking on inputs with many < characters
         r.memoize(1, r.parse("generic_call_expression")),
         // identifier last since it matches most things
         // Reserved keywords cannot be used as identifier expressions
@@ -5776,14 +5772,19 @@ fn rule_asserts_predicate(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_type(r: &RuleBuilder) -> Combinator {
-    r.choice((
-        r.parse("union_type"),
-        r.parse("intersection_type"),
-        r.parse("constructor_type"), // new (...) => type
-        r.parse("function_type"),
-        r.parse("conditional_type"),
-        r.parse("primary_type"),
-    ))
+    // Memoized to avoid exponential backtracking when type parsing fails deep inside
+    // nested brackets - prevents re-parsing same positions from different paths
+    r.memoize(
+        5,
+        r.choice((
+            r.parse("union_type"),
+            r.parse("intersection_type"),
+            r.parse("constructor_type"), // new (...) => type
+            r.parse("function_type"),
+            r.parse("conditional_type"),
+            r.parse("primary_type"),
+        )),
+    )
 }
 
 fn rule_primary_type(r: &RuleBuilder) -> Combinator {
@@ -5808,18 +5809,14 @@ fn rule_base_type(r: &RuleBuilder) -> Combinator {
         r.parse("typeof_type"),
         r.parse("keyof_type"),
         r.parse("infer_type"),
-        // Memoized to avoid exponential backtracking on inputs with many < in type positions
-        // type_reference has optional type_arguments which tries to parse <type, type, ...>
-        r.memoize(7, r.parse("type_reference")),
+        r.parse("type_reference"),
         r.parse("literal_type"),
         // mapped_type must come BEFORE object_type because both start with {
         // and mapped_type is more specific: { [P in T]: U }
         r.parse("mapped_type"),
         r.parse("object_type"),
-        // Memoized to avoid exponential backtracking on inputs with many [ in type positions
-        r.memoize(5, r.parse("tuple_type")),
-        // Memoized to avoid exponential backtracking on inputs with many ( in type positions
-        r.memoize(6, r.parse("parenthesized_type")),
+        r.parse("tuple_type"),
+        r.parse("parenthesized_type"),
     ))
 }
 

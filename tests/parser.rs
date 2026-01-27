@@ -3847,3 +3847,39 @@ fn test_equality_operators() {
     let prog = parse("(1 as number) === (1 as number)");
     assert_eq!(prog.body.len(), 1, "Should parse as 1 expression statement");
 }
+
+// Regression: fuzzer-discovered timeout - parser should not hang on malformed input
+// with nested brackets. The issue was exponential backtracking in type parsing when
+// angle bracket assertion fails. Fixed by memoizing the `type` rule.
+#[test]
+fn test_fuzzer_timeout_nested_brackets() {
+    // Original fuzzer-discovered inputs that caused parser timeouts
+    let inputs = [
+        r#"<((w22222[fac2aface$2[n[h022222222[face$2[e$1[we$2[n[h022[faface$2[n[h022[face2[$w222222[face$2[n[hace2[n[h2[/"#,
+        r#"<((e$1[w2222ee[$face$3[fa22[nace$2[w2222ce$2trw22ce$1[w222222[$face$2[n[h022[nacale$222[face$2true[n[h2[n[h1[/"#,
+        r#"<((w22222[face$1[w222222[$face$2[n[h022[nace$2[w2222[$face$2[n[h022[nace$2[w222222[n[h2[/"#,
+    ];
+
+    for input in inputs {
+        let (_, duration) = parse_timed(input);
+        assert!(
+            duration.as_millis() < 100,
+            "Parser should not hang on malformed input, took {}ms: {:?}",
+            duration.as_millis(),
+            input.get(..50).unwrap_or(input)
+        );
+    }
+
+    // Minimal pattern that triggers the issue: <( with many nested [
+    // Without memoization this grows exponentially (~2x per additional [)
+    for n in 1..=15 {
+        let input = "<((".to_string() + &"a[b".repeat(n);
+        let (_, duration) = parse_timed(&input);
+        assert!(
+            duration.as_millis() < 100,
+            "Parser should not hang on {} nested brackets, took {}ms",
+            n,
+            duration.as_millis()
+        );
+    }
+}
