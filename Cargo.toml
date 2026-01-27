@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "trampoline-parser", "trampoline-parser-tests"]
+members = ["."]
 exclude = ["fuzz"]
 
 [package]
@@ -93,4 +93,4 @@ debug = true
 strip = false
 
 [build-dependencies]
-trampoline-parser = { path = "trampoline-parser" }
+trampoline-parser = { version = "0.1", path = "../trampoline-parser/trampoline-parser" }
