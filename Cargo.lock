@@ -537,6 +537,8 @@ dependencies = [
 [[package]]
 name = "trampoline-parser"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a378722d638097c4c520b1b040681ba145f3b290844300b1db4d86377458591"
 dependencies = [
  "hashbrown 0.15.5",
 ]
