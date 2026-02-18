@@ -57,6 +57,14 @@ fn test_this_binding() {
 }
 
 #[test]
+fn test_trailing_comma_in_function_call() {
+    assert_eq!(
+        eval("function add(a: number, b: number): number { return a + b; } add(2, 3,)"),
+        JsValue::Number(5.0)
+    );
+}
+
+#[test]
 fn test_function_call() {
     assert_eq!(
         eval(
