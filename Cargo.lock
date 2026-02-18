@@ -530,16 +530,16 @@ dependencies = [
 
 [[package]]
 name = "trampoline-parser"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6c12ade9b522ca5308642ce13dc6aa622c394db0ced4b20210a29353423ebd0"
+checksum = "f5f531898403cd89297ad0e5229fd3887e9902aec1bfa818ddf82f67ed29c66a"
 dependencies = [
  "hashbrown 0.15.5",
 ]
 
 [[package]]
 name = "tsrun"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "criterion",
  "dlmalloc",

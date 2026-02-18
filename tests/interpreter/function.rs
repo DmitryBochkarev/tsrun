@@ -65,6 +65,37 @@ fn test_trailing_comma_in_function_call() {
 }
 
 #[test]
+fn test_trailing_comma_in_function_call_multiline() {
+    // Multiline call with trailing comma
+    assert_eq!(
+        eval("function foo(a: string, b: string): string { return a + b; } foo(\n'hello',\n'world',\n)"),
+        JsValue::from("helloworld")
+    );
+
+    // Full example: object with function expression + multiline call with trailing comma
+    assert_eq!(
+        eval(
+            r#"
+export const processor = {
+  elementHeader: function (element: any): any {
+    return element;
+  },
+};
+function test(a: string, b: string): string {
+  return foo(
+    a,
+    b,
+  );
+}
+function foo(a: string, b: string): string { return a + b; }
+test("hello", "world");
+"#
+        ),
+        JsValue::from("helloworld")
+    );
+}
+
+#[test]
 fn test_function_call() {
     assert_eq!(
         eval(
