@@ -4,7 +4,7 @@ exclude = ["fuzz"]
 
 [package]
 name = "tsrun"
-version = "0.1.19"
+version = "0.1.20"
 edition = "2024"
 description = "A TypeScript interpreter designed for embedding in applications"
 license = "MIT"
