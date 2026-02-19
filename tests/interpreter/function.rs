@@ -68,7 +68,9 @@ fn test_trailing_comma_in_function_call() {
 fn test_trailing_comma_in_function_call_multiline() {
     // Multiline call with trailing comma
     assert_eq!(
-        eval("function foo(a: string, b: string): string { return a + b; } foo(\n'hello',\n'world',\n)"),
+        eval(
+            "function foo(a: string, b: string): string { return a + b; } foo(\n'hello',\n'world',\n)"
+        ),
         JsValue::from("helloworld")
     );
 
