@@ -93,4 +93,5 @@ debug = true
 strip = false
 
 [build-dependencies]
-trampoline-parser = { version = "0.1.2" }
+trampoline-parser = { path = "../trampoline-parser/trampoline-parser" }
+quote = "1.0"
