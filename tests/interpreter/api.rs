@@ -1,7 +1,7 @@
 //! Tests for the public API ergonomics
 
 use super::{create_test_runtime, run, run_to_completion};
-use tsrun::{JsValue, OrderResponse, StepResult, api};
+use tsrun::{api, JsValue, OrderResponse, StepResult};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // JsValue Type Check Tests
@@ -2015,7 +2015,7 @@ fn test_prepare_call_thrown_error() {
 
 #[test]
 fn test_prepare_call_with_orders() {
-    use tsrun::{InterpreterConfig, create_eval_internal_module};
+    use tsrun::{create_eval_internal_module, InterpreterConfig};
 
     // Create an interpreter with the host module for orders
     let config = InterpreterConfig {
@@ -2652,4 +2652,33 @@ fn test_get_function_param_names_exported_function() {
         params,
         Some(vec!["input".to_string(), "options".to_string()])
     );
+}
+
+#[test]
+fn test_create_object_has_prototype() {
+    let mut interp = create_test_runtime();
+    let guard = api::create_guard(&interp);
+    let obj = api::create_object(&mut interp, &guard).unwrap();
+    // Object should have Object.prototype (can call hasOwnProperty)
+    let result = api::call_method(
+        &mut interp,
+        &guard,
+        &obj,
+        "hasOwnProperty",
+        &[JsValue::from("x")],
+    )
+    .unwrap();
+    assert_eq!(result.as_bool(), Some(false));
+}
+
+#[test]
+fn test_create_array_has_prototype() {
+    let mut interp = create_test_runtime();
+    let guard = api::create_guard(&interp);
+    let arr = api::create_array(&mut interp, &guard).unwrap();
+    // Array should have Array.prototype (can call push via method call)
+    assert_eq!(api::len(&arr), Some(0));
+    api::push(&arr, JsValue::from(42)).unwrap();
+    assert_eq!(api::len(&arr), Some(1));
+    assert_eq!(api::get_index(&arr, 0).unwrap().as_number(), Some(42.0));
 }

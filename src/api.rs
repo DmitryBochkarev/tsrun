@@ -27,12 +27,12 @@
 //! assert_eq!(joined.as_str(), Some("1-2-3"));
 //! ```
 
-use crate::JsString;
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::interpreter::{self, Interpreter};
 use crate::prelude::*;
 use crate::value::{self, CheapClone, JsObject, JsValue};
+use crate::JsString;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Guard Creation
@@ -139,7 +139,8 @@ pub fn create_object(
     interp: &mut Interpreter,
     guard: &Guard<JsObject>,
 ) -> Result<JsValue, JsError> {
-    create_from_json(interp, guard, &serde_json::json!({}))
+    let obj = interp.create_object(guard);
+    Ok(JsValue::Object(obj))
 }
 
 /// Create an empty array.
@@ -155,7 +156,8 @@ pub fn create_object(
 /// assert_eq!(api::len(&arr), Some(1));
 /// ```
 pub fn create_array(interp: &mut Interpreter, guard: &Guard<JsObject>) -> Result<JsValue, JsError> {
-    create_from_json(interp, guard, &serde_json::json!([]))
+    let arr = interp.create_empty_array(guard);
+    Ok(JsValue::Object(arr))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
