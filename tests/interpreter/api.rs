@@ -2755,3 +2755,42 @@ fn test_get_string() {
     api::set_property(&obj, "count", JsValue::from(1)).unwrap();
     assert!(api::get_string(&obj, "count").is_err());
 }
+
+#[test]
+fn test_run_to_completion_simple() {
+    let mut interp = create_test_runtime();
+    interp.prepare("1 + 2", None).unwrap();
+    let result = interp.run_to_completion().unwrap();
+    assert_eq!(result.as_number(), Some(3.0));
+}
+
+#[test]
+fn test_run_to_completion_object() {
+    let mut interp = create_test_runtime();
+    interp.prepare("({ x: 42 })", None).unwrap();
+    let result = interp.run_to_completion().unwrap();
+    assert!(result.is_object());
+}
+
+#[test]
+fn test_run_to_completion_with_exports() {
+    let mut interp = create_test_runtime();
+    interp
+        .prepare(
+            "export function add(a: number, b: number): number { return a + b; }",
+            Some(tsrun::ModulePath::new("test.ts")),
+        )
+        .unwrap();
+    let _result = interp.run_to_completion().unwrap();
+    let add_fn = api::get_export(&interp, "add").unwrap();
+    let guard = api::create_guard(&interp);
+    let result = api::call_function(
+        &mut interp,
+        &guard,
+        &add_fn,
+        None,
+        &[JsValue::from(3), JsValue::from(4)],
+    )
+    .unwrap();
+    assert_eq!(result.as_number(), Some(7.0));
+}

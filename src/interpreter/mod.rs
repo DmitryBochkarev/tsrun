@@ -1350,6 +1350,48 @@ impl Interpreter {
         }
     }
 
+    /// Run the interpreter to completion.
+    ///
+    /// Loops `step()` until execution finishes. Returns the final value.
+    ///
+    /// Returns `Err` if:
+    /// - Execution encounters a JavaScript error
+    /// - Execution requires unresolved imports (`NeedImports`)
+    /// - Execution suspends waiting for async orders (`Suspended`)
+    ///
+    /// For scripts that need module loading or async orders, use `step()` directly.
+    ///
+    /// # Example
+    /// ```
+    /// use tsrun::Interpreter;
+    ///
+    /// let mut interp = Interpreter::new();
+    /// interp.prepare("1 + 2", None).unwrap();
+    /// let result = interp.run_to_completion().unwrap();
+    /// assert_eq!(result.as_number(), Some(3.0));
+    /// ```
+    pub fn run_to_completion(&mut self) -> Result<crate::RuntimeValue, JsError> {
+        loop {
+            match self.step()? {
+                StepResult::Continue => continue,
+                StepResult::Complete(rv) => return Ok(rv),
+                StepResult::Done => return Ok(crate::RuntimeValue::unguarded(JsValue::Undefined)),
+                StepResult::NeedImports(specifiers) => {
+                    return Err(JsError::type_error(format!(
+                        "Unresolved imports: {:?}",
+                        specifiers
+                    )));
+                }
+                StepResult::Suspended { pending, .. } => {
+                    return Err(JsError::type_error(format!(
+                        "Execution suspended waiting for {} orders",
+                        pending.len()
+                    )));
+                }
+            }
+        }
+    }
+
     /// Finalize active execution (restore environment, finalize exports)
     fn finalize_active_execution(&mut self) {
         // Take state
