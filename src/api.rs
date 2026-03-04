@@ -160,6 +160,57 @@ pub fn create_array(interp: &mut Interpreter, guard: &Guard<JsObject>) -> Result
     Ok(JsValue::Object(arr))
 }
 
+/// Create an object with pre-allocated property capacity.
+///
+/// Use this when you know the number of properties upfront to avoid
+/// hashmap resizing during property insertion.
+///
+/// # Example
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let obj = api::create_object_with_capacity(&mut interp, &guard, 4).unwrap();
+/// api::set_property(&obj, "x", JsValue::from(1)).unwrap();
+/// api::set_property(&obj, "y", JsValue::from(2)).unwrap();
+/// ```
+pub fn create_object_with_capacity(
+    interp: &mut Interpreter,
+    guard: &Guard<JsObject>,
+    capacity: usize,
+) -> Result<JsValue, JsError> {
+    let obj = interp.create_object_with_capacity(guard, capacity);
+    Ok(JsValue::Object(obj))
+}
+
+/// Create an array with initial elements.
+///
+/// More efficient than creating an empty array and pushing elements one by one,
+/// as it allocates the exact capacity needed upfront.
+///
+/// # Example
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let arr = api::create_array_from(&mut interp, &guard, vec![
+///     JsValue::from(1),
+///     JsValue::from(2),
+///     JsValue::from(3),
+/// ]).unwrap();
+/// assert_eq!(api::len(&arr), Some(3));
+/// ```
+pub fn create_array_from(
+    interp: &mut Interpreter,
+    guard: &Guard<JsObject>,
+    elements: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let arr = interp.create_array_from(guard, elements);
+    Ok(JsValue::Object(arr))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Property Access (Read)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -252,6 +303,92 @@ pub fn get_elements(arr: &JsValue) -> Result<Vec<JsValue>, JsError> {
     };
 
     Ok(elements)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Typed Property Getters
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Get a property as f64. Returns Err if missing or not a number.
+///
+/// # Example
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let obj = api::create_object(&mut interp, &guard).unwrap();
+/// api::set_property(&obj, "x", JsValue::from(42.5)).unwrap();
+/// assert_eq!(api::get_f64(&obj, "x").unwrap(), 42.5);
+/// ```
+pub fn get_f64(obj: &JsValue, key: &str) -> Result<f64, JsError> {
+    let value = get_property(obj, key)?;
+    value
+        .as_number()
+        .ok_or_else(|| JsError::type_error(format!("Property '{}' is not a number", key)))
+}
+
+/// Get a property as i32. Returns Err if missing or not a number.
+///
+/// Truncates the f64 value to i32.
+///
+/// # Example
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let obj = api::create_object(&mut interp, &guard).unwrap();
+/// api::set_property(&obj, "count", JsValue::from(7)).unwrap();
+/// assert_eq!(api::get_i32(&obj, "count").unwrap(), 7);
+/// ```
+pub fn get_i32(obj: &JsValue, key: &str) -> Result<i32, JsError> {
+    let value = get_f64(obj, key)?;
+    Ok(value as i32)
+}
+
+/// Get a property as bool. Returns Err if missing or not a boolean.
+///
+/// # Example
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let obj = api::create_object(&mut interp, &guard).unwrap();
+/// api::set_property(&obj, "active", JsValue::from(true)).unwrap();
+/// assert_eq!(api::get_bool(&obj, "active").unwrap(), true);
+/// ```
+pub fn get_bool(obj: &JsValue, key: &str) -> Result<bool, JsError> {
+    let value = get_property(obj, key)?;
+    value
+        .as_bool()
+        .ok_or_else(|| JsError::type_error(format!("Property '{}' is not a boolean", key)))
+}
+
+/// Get a property as JsString. Returns Err if missing or not a string.
+///
+/// Returns `JsString` (an `Rc<str>`) which is cheap to clone.
+///
+/// # Example
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let obj = api::create_object(&mut interp, &guard).unwrap();
+/// api::set_property(&obj, "name", JsValue::from("Alice")).unwrap();
+/// assert_eq!(api::get_string(&obj, "name").unwrap().as_str(), "Alice");
+/// ```
+pub fn get_string(obj: &JsValue, key: &str) -> Result<JsString, JsError> {
+    let value = get_property(obj, key)?;
+    match value {
+        JsValue::String(s) => Ok(s),
+        _ => Err(JsError::type_error(format!(
+            "Property '{}' is not a string",
+            key
+        ))),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

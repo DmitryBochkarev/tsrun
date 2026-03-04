@@ -2682,3 +2682,76 @@ fn test_create_array_has_prototype() {
     assert_eq!(api::len(&arr), Some(1));
     assert_eq!(api::get_index(&arr, 0).unwrap().as_number(), Some(42.0));
 }
+
+#[test]
+fn test_create_object_with_capacity() {
+    let mut interp = create_test_runtime();
+    let guard = api::create_guard(&interp);
+    let obj = api::create_object_with_capacity(&mut interp, &guard, 4).unwrap();
+    api::set_property(&obj, "a", JsValue::from(1)).unwrap();
+    api::set_property(&obj, "b", JsValue::from(2)).unwrap();
+    api::set_property(&obj, "c", JsValue::from(3)).unwrap();
+    api::set_property(&obj, "d", JsValue::from(4)).unwrap();
+    assert_eq!(api::get_property(&obj, "a").unwrap().as_number(), Some(1.0));
+    assert_eq!(api::get_property(&obj, "d").unwrap().as_number(), Some(4.0));
+}
+
+#[test]
+fn test_create_array_from() {
+    let mut interp = create_test_runtime();
+    let guard = api::create_guard(&interp);
+    let elements = vec![JsValue::from(10), JsValue::from(20), JsValue::from(30)];
+    let arr = api::create_array_from(&mut interp, &guard, elements).unwrap();
+    assert_eq!(api::len(&arr), Some(3));
+    assert_eq!(api::get_index(&arr, 0).unwrap().as_number(), Some(10.0));
+    assert_eq!(api::get_index(&arr, 1).unwrap().as_number(), Some(20.0));
+    assert_eq!(api::get_index(&arr, 2).unwrap().as_number(), Some(30.0));
+}
+
+#[test]
+fn test_get_f64() {
+    let mut interp = create_test_runtime();
+    let guard = api::create_guard(&interp);
+    let obj = api::create_object(&mut interp, &guard).unwrap();
+    api::set_property(&obj, "x", JsValue::from(42.5)).unwrap();
+    assert_eq!(api::get_f64(&obj, "x").unwrap(), 42.5);
+    // Missing property
+    assert!(api::get_f64(&obj, "missing").is_err());
+    // Wrong type
+    api::set_property(&obj, "name", JsValue::from("hello")).unwrap();
+    assert!(api::get_f64(&obj, "name").is_err());
+}
+
+#[test]
+fn test_get_bool() {
+    let mut interp = create_test_runtime();
+    let guard = api::create_guard(&interp);
+    let obj = api::create_object(&mut interp, &guard).unwrap();
+    api::set_property(&obj, "active", JsValue::from(true)).unwrap();
+    assert_eq!(api::get_bool(&obj, "active").unwrap(), true);
+    assert!(api::get_bool(&obj, "missing").is_err());
+    api::set_property(&obj, "count", JsValue::from(1)).unwrap();
+    assert!(api::get_bool(&obj, "count").is_err());
+}
+
+#[test]
+fn test_get_i32() {
+    let mut interp = create_test_runtime();
+    let guard = api::create_guard(&interp);
+    let obj = api::create_object(&mut interp, &guard).unwrap();
+    api::set_property(&obj, "count", JsValue::from(7)).unwrap();
+    assert_eq!(api::get_i32(&obj, "count").unwrap(), 7);
+    assert!(api::get_i32(&obj, "missing").is_err());
+}
+
+#[test]
+fn test_get_string() {
+    let mut interp = create_test_runtime();
+    let guard = api::create_guard(&interp);
+    let obj = api::create_object(&mut interp, &guard).unwrap();
+    api::set_property(&obj, "name", JsValue::from("Alice")).unwrap();
+    assert_eq!(api::get_string(&obj, "name").unwrap().as_str(), "Alice");
+    assert!(api::get_string(&obj, "missing").is_err());
+    api::set_property(&obj, "count", JsValue::from(1)).unwrap();
+    assert!(api::get_string(&obj, "count").is_err());
+}
