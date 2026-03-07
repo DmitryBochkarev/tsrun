@@ -1,0 +1,13 @@
+pre-commit:
+  piped: true
+  commands:
+    fmt:
+      run: cargo fmt --all -- --check
+    clippy:
+      run: cargo clippy --all-targets --all-features -- -D warnings
+    build:
+      run: cargo build --verbose
+    test:
+      run: timeout 120 cargo test --verbose
+    build-c-api:
+      run: cargo build --features c-api
