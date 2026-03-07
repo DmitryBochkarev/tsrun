@@ -311,7 +311,11 @@ impl Compiler {
 
         // Start from the current (innermost) context and work backwards
         // Set continue target for the current loop
-        let current_continue_scope_depth = self.loop_stack.get(len - 1).map(|ctx| ctx.continue_scope_depth).unwrap_or(0);
+        let current_continue_scope_depth = self
+            .loop_stack
+            .get(len - 1)
+            .map(|ctx| ctx.continue_scope_depth)
+            .unwrap_or(0);
         if let Some(ctx) = self.loop_stack.get_mut(len - 1) {
             ctx.continue_target = Some(target);
             all_pending_jumps.append(&mut ctx.continue_jumps);
@@ -337,7 +341,8 @@ impl Compiler {
         // Patch all pending continue jumps (both target address and scope_depth)
         for jump in &all_pending_jumps {
             self.builder.patch_jump_to(*jump, target as JumpTarget);
-            self.builder.patch_scope_depth(*jump, current_continue_scope_depth as u32);
+            self.builder
+                .patch_scope_depth(*jump, current_continue_scope_depth as u32);
         }
     }
 

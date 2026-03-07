@@ -1,7 +1,7 @@
 //! Tests for garbage collection of JavaScript objects
 
 use super::run;
-use tsrun::{api, GcStats, Interpreter, JsString, JsValue, RuntimeValue, StepResult};
+use tsrun::{GcStats, Interpreter, JsString, JsValue, RuntimeValue, StepResult, api};
 
 /// Get baseline object count (builtins only, no user code)
 fn get_baseline_live_count() -> usize {

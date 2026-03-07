@@ -1,7 +1,7 @@
 //! Tests for the public API ergonomics
 
 use super::{create_test_runtime, run, run_to_completion};
-use tsrun::{api, JsValue, OrderResponse, StepResult};
+use tsrun::{JsValue, OrderResponse, StepResult, api};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // JsValue Type Check Tests
@@ -2015,7 +2015,7 @@ fn test_prepare_call_thrown_error() {
 
 #[test]
 fn test_prepare_call_with_orders() {
-    use tsrun::{create_eval_internal_module, InterpreterConfig};
+    use tsrun::{InterpreterConfig, create_eval_internal_module};
 
     // Create an interpreter with the host module for orders
     let config = InterpreterConfig {

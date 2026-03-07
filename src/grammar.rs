@@ -2432,22 +2432,22 @@ fn rule_program(r: &RuleBuilder) -> Combinator {
         r.zero_or_more(r.parse("statement")),
         r.parse("ws"), // Consume trailing whitespace/comments
     ))
-    .ast(
-        quote!(|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
-            // result is [ws, statements, ws]
-            let parts = result.into_list();
-            let stmts_result = parts.into_iter().nth(1).unwrap_or(ParseResult::None);
-            let items = stmts_result.into_list();
-            let mut statements = Vec::new();
-            for item in items {
-                statements.push(to_stmt(item)?);
-            }
-            Ok(ParseResult::Prog(Program {
-                body: Rc::from(statements),
-                source_type: SourceType::Module,
-            }))
-        }),
-    )
+    .ast(quote!(|result: ParseResult,
+                       _span: Span|
+     -> Result<ParseResult, ParseError> {
+        // result is [ws, statements, ws]
+        let parts = result.into_list();
+        let stmts_result = parts.into_iter().nth(1).unwrap_or(ParseResult::None);
+        let items = stmts_result.into_list();
+        let mut statements = Vec::new();
+        for item in items {
+            statements.push(to_stmt(item)?);
+        }
+        Ok(ParseResult::Prog(Program {
+            body: Rc::from(statements),
+            source_type: SourceType::Module,
+        }))
+    }))
 }
 
 fn rule_statement(r: &RuleBuilder) -> Combinator {
@@ -2492,9 +2492,14 @@ fn rule_variable_declaration(r: &RuleBuilder) -> Combinator {
         r.separated_by(r.parse("variable_declarator"), op(r, ",")),
         r.optional(r.parse("semicolon")), // Optional for ASI support
     ))
-    .ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         let mut items = result.into_list().into_iter();
-        let kind_text = items.next().ok_or_else(|| ParseError::new("Expected variable kind".to_string(), 0, 0))?.into_text();
+        let kind_text = items
+            .next()
+            .ok_or_else(|| ParseError::new("Expected variable kind".to_string(), 0, 0))?
+            .into_text();
         let kind = match kind_text.as_ref().trim() {
             "let" => VariableKind::Let,
             "const" => VariableKind::Const,
@@ -2502,7 +2507,9 @@ fn rule_variable_declaration(r: &RuleBuilder) -> Combinator {
             _ => VariableKind::Let,
         };
         // Get declarators from the separated_by result
-        let decl_list = items.next().ok_or_else(|| ParseError::new("Expected declarators".to_string(), 0, 0))?;
+        let decl_list = items
+            .next()
+            .ok_or_else(|| ParseError::new("Expected declarators".to_string(), 0, 0))?;
         let decl_items = decl_list.into_list();
         let mut declarations = Vec::new();
         for item in decl_items {
@@ -2512,13 +2519,13 @@ fn rule_variable_declaration(r: &RuleBuilder) -> Combinator {
                 let pattern = to_pattern(parts_iter.next().unwrap_or(ParseResult::None))?;
                 // Skip type annotation for now (types are stripped at runtime)
                 let _type_ann_result = parts_iter.next();
-                let init = parts_iter.next().and_then(|r| {
-                    match r {
-                        ParseResult::List(init_parts) => {
-                            init_parts.into_iter().nth(1).and_then(|e| to_expr(e).ok()).map(Rc::new)
-                        }
-                        _ => None,
-                    }
+                let init = parts_iter.next().and_then(|r| match r {
+                    ParseResult::List(init_parts) => init_parts
+                        .into_iter()
+                        .nth(1)
+                        .and_then(|e| to_expr(e).ok())
+                        .map(Rc::new),
+                    _ => None,
                 });
                 declarations.push(VariableDeclarator {
                     id: pattern,
@@ -2528,11 +2535,13 @@ fn rule_variable_declaration(r: &RuleBuilder) -> Combinator {
                 });
             }
         }
-        Ok(ParseResult::Stmt(Statement::VariableDeclaration(VariableDeclaration {
-            kind,
-            declarations: Rc::from(declarations),
-            span,
-        })))
+        Ok(ParseResult::Stmt(Statement::VariableDeclaration(
+            VariableDeclaration {
+                kind,
+                declarations: Rc::from(declarations),
+                span,
+            },
+        )))
     }))
 }
 
@@ -2549,9 +2558,15 @@ fn rule_variable_declaration_no_semi(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.capture(r.choice((kw(r, "let"), kw(r, "const"), kw(r, "var")))),
         r.separated_by(r.parse("variable_declarator"), op(r, ",")),
-    )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         let mut items = result.into_list().into_iter();
-        let kind_text = items.next().ok_or_else(|| ParseError::new("Expected variable kind".to_string(), 0, 0))?.into_text();
+        let kind_text = items
+            .next()
+            .ok_or_else(|| ParseError::new("Expected variable kind".to_string(), 0, 0))?
+            .into_text();
         let kind = match kind_text.as_ref().trim() {
             "let" => VariableKind::Let,
             "const" => VariableKind::Const,
@@ -2559,7 +2574,9 @@ fn rule_variable_declaration_no_semi(r: &RuleBuilder) -> Combinator {
             _ => VariableKind::Let,
         };
         // Get declarators from the separated_by result
-        let decl_list = items.next().ok_or_else(|| ParseError::new("Expected declarators".to_string(), 0, 0))?;
+        let decl_list = items
+            .next()
+            .ok_or_else(|| ParseError::new("Expected declarators".to_string(), 0, 0))?;
         let decl_items = decl_list.into_list();
         let mut declarations = Vec::new();
         for item in decl_items {
@@ -2567,13 +2584,13 @@ fn rule_variable_declaration_no_semi(r: &RuleBuilder) -> Combinator {
                 let mut parts_iter = parts.into_iter();
                 let pattern = to_pattern(parts_iter.next().unwrap_or(ParseResult::None))?;
                 let _type_ann_result = parts_iter.next();
-                let init = parts_iter.next().and_then(|r| {
-                    match r {
-                        ParseResult::List(init_parts) => {
-                            init_parts.into_iter().nth(1).and_then(|e| to_expr(e).ok()).map(Rc::new)
-                        }
-                        _ => None,
-                    }
+                let init = parts_iter.next().and_then(|r| match r {
+                    ParseResult::List(init_parts) => init_parts
+                        .into_iter()
+                        .nth(1)
+                        .and_then(|e| to_expr(e).ok())
+                        .map(Rc::new),
+                    _ => None,
                 });
                 declarations.push(VariableDeclarator {
                     id: pattern,
@@ -2583,11 +2600,13 @@ fn rule_variable_declaration_no_semi(r: &RuleBuilder) -> Combinator {
                 });
             }
         }
-        Ok(ParseResult::Stmt(Statement::VariableDeclaration(VariableDeclaration {
-            kind,
-            declarations: Rc::from(declarations),
-            span,
-        })))
+        Ok(ParseResult::Stmt(Statement::VariableDeclaration(
+            VariableDeclaration {
+                kind,
+                declarations: Rc::from(declarations),
+                span,
+            },
+        )))
     }))
 }
 
@@ -2604,8 +2623,9 @@ fn rule_function_declaration(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("return_type_annotation")), // Supports asserts and type predicates
         r.parse("block_statement"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [async?, function, *?, name?, type_params?, (, params?, ), return_type?, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2621,10 +2641,13 @@ fn rule_function_declaration(r: &RuleBuilder) -> Combinator {
             let body = iter.next().unwrap_or(ParseResult::None);
             create_function_decl(async_kw, generator, name, params, body, span)
         } else {
-            Err(ParseError::new("Expected function declaration parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected function declaration parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_class_declaration(r: &RuleBuilder) -> Combinator {
@@ -2641,8 +2664,9 @@ fn rule_class_declaration(r: &RuleBuilder) -> Combinator {
         ))),
         r.parse("class_body"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [decorators, abstract?, class, name?, type_params?, extends?, implements?, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2657,10 +2681,13 @@ fn rule_class_declaration(r: &RuleBuilder) -> Combinator {
 
             create_class_decl(decorators, abstract_kw, name, extends_clause, body, span)
         } else {
-            Err(ParseError::new("Expected class declaration parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected class declaration parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_class_body(r: &RuleBuilder) -> Combinator {
@@ -2669,8 +2696,9 @@ fn rule_class_body(r: &RuleBuilder) -> Combinator {
         r.zero_or_more(r.parse("class_member")),
         op(r, "}"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [{, members*, }]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2680,10 +2708,13 @@ fn rule_class_body(r: &RuleBuilder) -> Combinator {
 
             create_class_body(members, span)
         } else {
-            Err(ParseError::new("Expected class body parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected class body parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_class_member(r: &RuleBuilder) -> Combinator {
@@ -2711,7 +2742,10 @@ fn rule_abstract_method(r: &RuleBuilder) -> Combinator {
         op(r, ")"),
         r.optional(r.parse("type_annotation")),
         r.parse("semicolon"),
-    )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [decorators, accessibility?, abstract, async?, *, key, type_params?, (, params?, ), type_ann?, ;]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2729,9 +2763,23 @@ fn rule_abstract_method(r: &RuleBuilder) -> Combinator {
             let _semicolon = iter.next();
 
             // Create a method with no body (abstract method)
-            create_class_method(decorators, ParseResult::None, async_kw, generator, ParseResult::None, key, params, ParseResult::None, span)
+            create_class_method(
+                decorators,
+                ParseResult::None,
+                async_kw,
+                generator,
+                ParseResult::None,
+                key,
+                params,
+                ParseResult::None,
+                span,
+            )
         } else {
-            Err(ParseError::new("Expected abstract method parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected abstract method parts".to_string(),
+                0,
+                0,
+            ))
         }
     }))
 }
@@ -2745,8 +2793,9 @@ fn rule_class_constructor(r: &RuleBuilder) -> Combinator {
         op(r, ")"),
         r.parse("block_statement"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [accessibility?, constructor, (, params?, ), body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2759,10 +2808,13 @@ fn rule_class_constructor(r: &RuleBuilder) -> Combinator {
 
             create_constructor(accessibility, params, body, span)
         } else {
-            Err(ParseError::new("Expected constructor parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected constructor parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_class_method(r: &RuleBuilder) -> Combinator {
@@ -2783,7 +2835,10 @@ fn rule_class_method(r: &RuleBuilder) -> Combinator {
             // Either method body or semicolon (for method signatures in declare classes)
             r.choice((r.parse("block_statement"), r.optional(r.parse("semicolon")))),
         )),
-    )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [decorators, accessibility?, static?, async?, *, get/set?, key, type_params?, method_sig]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2815,9 +2870,15 @@ fn rule_class_method(r: &RuleBuilder) -> Combinator {
                 (ParseResult::None, ParseResult::None)
             };
 
-            create_class_method(decorators, static_kw, async_kw, generator, accessor, key, params, body, span)
+            create_class_method(
+                decorators, static_kw, async_kw, generator, accessor, key, params, body, span,
+            )
         } else {
-            Err(ParseError::new("Expected class method parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected class method parts".to_string(),
+                0,
+                0,
+            ))
         }
     }))
 }
@@ -2836,7 +2897,10 @@ fn rule_class_property(r: &RuleBuilder) -> Combinator {
         r.optional(r.sequence((op(r, "="), r.parse("assignment_expression")))),
         // Semicolon is optional in class properties (ASI)
         r.optional(r.parse("semicolon")),
-    )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [decorators, accessibility?, static?, readonly?, accessor?, key, ?, type_ann?, init?, ;]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2851,34 +2915,56 @@ fn rule_class_property(r: &RuleBuilder) -> Combinator {
             let initializer = iter.next().unwrap_or(ParseResult::None);
             let _semi = iter.next();
 
-            create_class_property(decorators, static_kw, readonly, accessor, key, optional, initializer, span)
+            create_class_property(
+                decorators,
+                static_kw,
+                readonly,
+                accessor,
+                key,
+                optional,
+                initializer,
+                span,
+            )
         } else {
-            Err(ParseError::new("Expected class property parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected class property parts".to_string(),
+                0,
+                0,
+            ))
         }
     }))
 }
 
 fn rule_static_block(r: &RuleBuilder) -> Combinator {
     r.sequence((kw(r, "static"), r.parse("block_statement")))
-        .ast(
-            quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
-        // [static, block]
-        if let ParseResult::List(parts) = result {
-            let mut iter = parts.into_iter();
-            let _static_kw = iter.next();
-            let block = iter.next().unwrap_or(ParseResult::None);
+        .ast(quote!(|result: ParseResult,
+                     span: Span|
+         -> Result<ParseResult, ParseError> {
+            // [static, block]
+            if let ParseResult::List(parts) = result {
+                let mut iter = parts.into_iter();
+                let _static_kw = iter.next();
+                let block = iter.next().unwrap_or(ParseResult::None);
 
-            let block_stmt = match block {
-                ParseResult::Stmt(Statement::Block(b)) => b,
-                _ => BlockStatement { body: Rc::from(vec![]), span: span.clone() },
-            };
+                let block_stmt = match block {
+                    ParseResult::Stmt(Statement::Block(b)) => b,
+                    _ => BlockStatement {
+                        body: Rc::from(vec![]),
+                        span: span.clone(),
+                    },
+                };
 
-            Ok(ParseResult::ClassMember(ClassMember::StaticBlock(block_stmt)))
-        } else {
-            Err(ParseError::new("Expected static block parts".to_string(), 0, 0))
-        }
-    }),
-        )
+                Ok(ParseResult::ClassMember(ClassMember::StaticBlock(
+                    block_stmt,
+                )))
+            } else {
+                Err(ParseError::new(
+                    "Expected static block parts".to_string(),
+                    0,
+                    0,
+                ))
+            }
+        }))
 }
 
 fn rule_if_statement(r: &RuleBuilder) -> Combinator {
@@ -2890,8 +2976,9 @@ fn rule_if_statement(r: &RuleBuilder) -> Combinator {
         r.parse("statement"),
         r.optional(r.sequence((kw(r, "else"), r.parse("statement")))),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [if, (, test, ), consequent, else_clause?]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2905,11 +2992,9 @@ fn rule_if_statement(r: &RuleBuilder) -> Combinator {
             let alternate = match else_clause {
                 Some(ParseResult::List(else_parts)) => {
                     // [else, statement]
-                    else_parts.into_iter().nth(1).map(|s| {
-                        match s {
-                            ParseResult::Stmt(stmt) => Rc::new(stmt),
-                            _ => Rc::new(Statement::Empty),
-                        }
+                    else_parts.into_iter().nth(1).map(|s| match s {
+                        ParseResult::Stmt(stmt) => Rc::new(stmt),
+                        _ => Rc::new(Statement::Empty),
                     })
                 }
                 _ => None,
@@ -2927,10 +3012,13 @@ fn rule_if_statement(r: &RuleBuilder) -> Combinator {
                 span,
             })))
         } else {
-            Err(ParseError::new("Expected if statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected if statement parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_for_statement(r: &RuleBuilder) -> Combinator {
@@ -2944,7 +3032,10 @@ fn rule_for_statement(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("expression")),
         op(r, ")"),
         r.parse("statement"),
-    )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [for, (, init?, ;, test?, ;, update?, ), body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2960,7 +3051,9 @@ fn rule_for_statement(r: &RuleBuilder) -> Combinator {
 
             let init = match init_result {
                 ParseResult::None => None,
-                ParseResult::Stmt(Statement::VariableDeclaration(decl)) => Some(ForInit::Variable(decl)),
+                ParseResult::Stmt(Statement::VariableDeclaration(decl)) => {
+                    Some(ForInit::Variable(decl))
+                }
                 ParseResult::Expr(e) => Some(ForInit::Expression(Rc::new(e))),
                 other => to_expr(other).ok().map(|e| ForInit::Expression(Rc::new(e))),
             };
@@ -2988,7 +3081,11 @@ fn rule_for_statement(r: &RuleBuilder) -> Combinator {
                 span,
             }))))
         } else {
-            Err(ParseError::new("Expected for statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected for statement parts".to_string(),
+                0,
+                0,
+            ))
         }
     }))
 }
@@ -3009,7 +3106,10 @@ fn rule_for_in_statement(r: &RuleBuilder) -> Combinator {
         r.parse("expression"),
         op(r, ")"),
         r.parse("statement"),
-    )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [for, (, left, in, right, ), body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3022,11 +3122,21 @@ fn rule_for_in_statement(r: &RuleBuilder) -> Combinator {
             let body = iter.next().unwrap_or(ParseResult::None);
 
             let left = match left_result {
-                ParseResult::Stmt(Statement::VariableDeclaration(decl)) => ForInOfLeft::Variable(decl),
+                ParseResult::Stmt(Statement::VariableDeclaration(decl)) => {
+                    ForInOfLeft::Variable(decl)
+                }
                 ParseResult::Pat(p) => ForInOfLeft::Pattern(p),
                 ParseResult::Ident(id) => ForInOfLeft::Pattern(Pattern::Identifier(id)),
-                ParseResult::Expr(Expression::Identifier(id)) => ForInOfLeft::Pattern(Pattern::Identifier(id)),
-                _ => return Err(ParseError::new("Invalid for-in left side".to_string(), 0, 0)),
+                ParseResult::Expr(Expression::Identifier(id)) => {
+                    ForInOfLeft::Pattern(Pattern::Identifier(id))
+                }
+                _ => {
+                    return Err(ParseError::new(
+                        "Invalid for-in left side".to_string(),
+                        0,
+                        0,
+                    ));
+                }
             };
 
             let body_stmt = match body {
@@ -3034,14 +3144,20 @@ fn rule_for_in_statement(r: &RuleBuilder) -> Combinator {
                 _ => return Err(ParseError::new("Expected statement".to_string(), 0, 0)),
             };
 
-            Ok(ParseResult::Stmt(Statement::ForIn(Box::new(ForInStatement {
-                left,
-                right: Rc::new(to_expr(right)?),
-                body: body_stmt,
-                span,
-            }))))
+            Ok(ParseResult::Stmt(Statement::ForIn(Box::new(
+                ForInStatement {
+                    left,
+                    right: Rc::new(to_expr(right)?),
+                    body: body_stmt,
+                    span,
+                },
+            ))))
         } else {
-            Err(ParseError::new("Expected for-in statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected for-in statement parts".to_string(),
+                0,
+                0,
+            ))
         }
     }))
 }
@@ -3056,7 +3172,10 @@ fn rule_for_of_statement(r: &RuleBuilder) -> Combinator {
         r.parse("expression"),
         op(r, ")"),
         r.parse("statement"),
-    )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [for, await?, (, left, of, right, ), body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3072,11 +3191,21 @@ fn rule_for_of_statement(r: &RuleBuilder) -> Combinator {
             let await_ = !matches!(await_result, ParseResult::None);
 
             let left = match left_result {
-                ParseResult::Stmt(Statement::VariableDeclaration(decl)) => ForInOfLeft::Variable(decl),
+                ParseResult::Stmt(Statement::VariableDeclaration(decl)) => {
+                    ForInOfLeft::Variable(decl)
+                }
                 ParseResult::Pat(p) => ForInOfLeft::Pattern(p),
                 ParseResult::Ident(id) => ForInOfLeft::Pattern(Pattern::Identifier(id)),
-                ParseResult::Expr(Expression::Identifier(id)) => ForInOfLeft::Pattern(Pattern::Identifier(id)),
-                _ => return Err(ParseError::new("Invalid for-of left side".to_string(), 0, 0)),
+                ParseResult::Expr(Expression::Identifier(id)) => {
+                    ForInOfLeft::Pattern(Pattern::Identifier(id))
+                }
+                _ => {
+                    return Err(ParseError::new(
+                        "Invalid for-of left side".to_string(),
+                        0,
+                        0,
+                    ));
+                }
             };
 
             let body_stmt = match body {
@@ -3084,15 +3213,21 @@ fn rule_for_of_statement(r: &RuleBuilder) -> Combinator {
                 _ => return Err(ParseError::new("Expected statement".to_string(), 0, 0)),
             };
 
-            Ok(ParseResult::Stmt(Statement::ForOf(Box::new(ForOfStatement {
-                left,
-                right: Rc::new(to_expr(right)?),
-                body: body_stmt,
-                await_,
-                span,
-            }))))
+            Ok(ParseResult::Stmt(Statement::ForOf(Box::new(
+                ForOfStatement {
+                    left,
+                    right: Rc::new(to_expr(right)?),
+                    body: body_stmt,
+                    await_,
+                    span,
+                },
+            ))))
         } else {
-            Err(ParseError::new("Expected for-of statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected for-of statement parts".to_string(),
+                0,
+                0,
+            ))
         }
     }))
 }
@@ -3109,8 +3244,9 @@ fn rule_while_statement(r: &RuleBuilder) -> Combinator {
         op(r, ")"),
         r.parse("statement"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [while, (, test, ), body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3131,10 +3267,13 @@ fn rule_while_statement(r: &RuleBuilder) -> Combinator {
                 span,
             })))
         } else {
-            Err(ParseError::new("Expected while statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected while statement parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_do_while_statement(r: &RuleBuilder) -> Combinator {
@@ -3147,8 +3286,9 @@ fn rule_do_while_statement(r: &RuleBuilder) -> Combinator {
         op(r, ")"),
         r.parse("semicolon"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [do, body, while, (, test, ), ;]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3169,10 +3309,13 @@ fn rule_do_while_statement(r: &RuleBuilder) -> Combinator {
                 span,
             })))
         } else {
-            Err(ParseError::new("Expected do-while statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected do-while statement parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_switch_statement(r: &RuleBuilder) -> Combinator {
@@ -3185,8 +3328,9 @@ fn rule_switch_statement(r: &RuleBuilder) -> Combinator {
         r.zero_or_more(r.parse("switch_case")),
         op(r, "}"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [switch, (, discriminant, ), {, cases, }]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3199,15 +3343,16 @@ fn rule_switch_statement(r: &RuleBuilder) -> Combinator {
             let _close_brace = iter.next();
 
             let cases: Vec<SwitchCase> = match cases_result {
-                ParseResult::List(items) => {
-                    items.into_iter().filter_map(|item| {
+                ParseResult::List(items) => items
+                    .into_iter()
+                    .filter_map(|item| {
                         if let ParseResult::SwitchCase(c) = item {
                             Some(c)
                         } else {
                             None
                         }
-                    }).collect()
-                }
+                    })
+                    .collect(),
                 ParseResult::None => vec![],
                 _ => vec![],
             };
@@ -3218,10 +3363,13 @@ fn rule_switch_statement(r: &RuleBuilder) -> Combinator {
                 span,
             })))
         } else {
-            Err(ParseError::new("Expected switch statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected switch statement parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_switch_case(r: &RuleBuilder) -> Combinator {
@@ -3236,8 +3384,9 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
                 r.parse("statement"),
             ))),
         ))
-        .ast(
-            quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        .ast(quote!(|result: ParseResult,
+                               span: Span|
+         -> Result<ParseResult, ParseError> {
             // [case, test, :, consequent]
             if let ParseResult::List(parts) = result {
                 let mut iter = parts.into_iter();
@@ -3249,17 +3398,20 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
                 let consequent: Vec<Statement> = match consequent_result {
                     ParseResult::List(items) => {
                         // Each item is [lookahead_result, Stmt] from the sequence
-                        items.into_iter().filter_map(|item| {
-                            match item {
+                        items
+                            .into_iter()
+                            .filter_map(|item| match item {
                                 ParseResult::Stmt(s) => Some(s),
-                                ParseResult::List(inner) => {
-                                    inner.into_iter().find_map(|i| {
-                                        if let ParseResult::Stmt(s) = i { Some(s) } else { None }
-                                    })
-                                }
+                                ParseResult::List(inner) => inner.into_iter().find_map(|i| {
+                                    if let ParseResult::Stmt(s) = i {
+                                        Some(s)
+                                    } else {
+                                        None
+                                    }
+                                }),
                                 _ => None,
-                            }
-                        }).collect()
+                            })
+                            .collect()
                     }
                     ParseResult::Stmt(s) => vec![s],
                     _ => vec![],
@@ -3273,8 +3425,7 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
             } else {
                 Err(ParseError::new("Expected case parts".to_string(), 0, 0))
             }
-        }),
-        ),
+        })),
         r.sequence((
             kw(r, "default"),
             op(r, ":"),
@@ -3284,8 +3435,9 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
                 r.parse("statement"),
             ))),
         ))
-        .ast(
-            quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        .ast(quote!(|result: ParseResult,
+                               span: Span|
+         -> Result<ParseResult, ParseError> {
             // [default, :, consequent]
             if let ParseResult::List(parts) = result {
                 let mut iter = parts.into_iter();
@@ -3296,17 +3448,20 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
                 let consequent: Vec<Statement> = match consequent_result {
                     ParseResult::List(items) => {
                         // Each item is [lookahead_result, Stmt] from the sequence
-                        items.into_iter().filter_map(|item| {
-                            match item {
+                        items
+                            .into_iter()
+                            .filter_map(|item| match item {
                                 ParseResult::Stmt(s) => Some(s),
-                                ParseResult::List(inner) => {
-                                    inner.into_iter().find_map(|i| {
-                                        if let ParseResult::Stmt(s) = i { Some(s) } else { None }
-                                    })
-                                }
+                                ParseResult::List(inner) => inner.into_iter().find_map(|i| {
+                                    if let ParseResult::Stmt(s) = i {
+                                        Some(s)
+                                    } else {
+                                        None
+                                    }
+                                }),
                                 _ => None,
-                            }
-                        }).collect()
+                            })
+                            .collect()
                     }
                     ParseResult::Stmt(s) => vec![s],
                     _ => vec![],
@@ -3318,10 +3473,13 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
                     span,
                 }))
             } else {
-                Err(ParseError::new("Expected default case parts".to_string(), 0, 0))
+                Err(ParseError::new(
+                    "Expected default case parts".to_string(),
+                    0,
+                    0,
+                ))
             }
-        }),
-        ),
+        })),
     ))
 }
 
@@ -3332,8 +3490,9 @@ fn rule_try_statement(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("catch_clause")),
         r.optional(r.sequence((kw(r, "finally"), r.parse("block_statement")))),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [try, block, catch_clause?, finally_clause?]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3359,12 +3518,10 @@ fn rule_try_statement(r: &RuleBuilder) -> Combinator {
                     // Extract param from optional (paren, pattern, paren)
                     let param = match param_result {
                         Some(ParseResult::List(param_parts)) => {
-                            param_parts.into_iter().nth(1).and_then(|p| {
-                                match p {
-                                    ParseResult::Pat(pat) => Some(pat),
-                                    ParseResult::Ident(id) => Some(Pattern::Identifier(id)),
-                                    _ => None,
-                                }
+                            param_parts.into_iter().nth(1).and_then(|p| match p {
+                                ParseResult::Pat(pat) => Some(pat),
+                                ParseResult::Ident(id) => Some(Pattern::Identifier(id)),
+                                _ => None,
                             })
                         }
                         _ => None,
@@ -3375,7 +3532,11 @@ fn rule_try_statement(r: &RuleBuilder) -> Combinator {
                         _ => return Err(ParseError::new("Expected catch body".to_string(), 0, 0)),
                     };
 
-                    Some(CatchClause { param, body, span: span.clone() })
+                    Some(CatchClause {
+                        param,
+                        body,
+                        span: span.clone(),
+                    })
                 }
                 ParseResult::None => None,
                 _ => None,
@@ -3384,11 +3545,9 @@ fn rule_try_statement(r: &RuleBuilder) -> Combinator {
             // finally clause is [finally, block]
             let finalizer = match finally_result {
                 ParseResult::List(finally_parts) => {
-                    finally_parts.into_iter().nth(1).and_then(|b| {
-                        match b {
-                            ParseResult::Stmt(Statement::Block(block)) => Some(block),
-                            _ => None,
-                        }
+                    finally_parts.into_iter().nth(1).and_then(|b| match b {
+                        ParseResult::Stmt(Statement::Block(block)) => Some(block),
+                        _ => None,
                     })
                 }
                 ParseResult::None => None,
@@ -3402,10 +3561,13 @@ fn rule_try_statement(r: &RuleBuilder) -> Combinator {
                 span,
             }))))
         } else {
-            Err(ParseError::new("Expected try statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected try statement parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_catch_clause(r: &RuleBuilder) -> Combinator {
@@ -3424,11 +3586,11 @@ fn rule_catch_clause(r: &RuleBuilder) -> Combinator {
 
 fn rule_block_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((op(r, "{"), r.zero_or_more(r.parse("statement")), op(r, "}")))
-        .ast(
-            quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
-        create_block_stmt(result, span)
-    }),
-        )
+        .ast(quote!(|result: ParseResult,
+                     span: Span|
+         -> Result<ParseResult, ParseError> {
+            create_block_stmt(result, span)
+        }))
 }
 
 fn rule_return_statement(r: &RuleBuilder) -> Combinator {
@@ -3437,8 +3599,9 @@ fn rule_return_statement(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("expression")),
         r.optional(r.parse("semicolon")),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
             let _return_kw = iter.next(); // skip 'return'
@@ -3447,12 +3610,18 @@ fn rule_return_statement(r: &RuleBuilder) -> Combinator {
                 ParseResult::None => None,
                 other => Some(Rc::new(to_expr(other)?)),
             };
-            Ok(ParseResult::Stmt(Statement::Return(ReturnStatement { argument, span })))
+            Ok(ParseResult::Stmt(Statement::Return(ReturnStatement {
+                argument,
+                span,
+            })))
         } else {
-            Err(ParseError::new("Expected return statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected return statement parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_break_statement(r: &RuleBuilder) -> Combinator {
@@ -3461,8 +3630,9 @@ fn rule_break_statement(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("identifier")),
         r.optional(r.parse("semicolon")),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
             let _break_kw = iter.next();
@@ -3470,12 +3640,18 @@ fn rule_break_statement(r: &RuleBuilder) -> Combinator {
                 ParseResult::Ident(id) => Some(id),
                 _ => None,
             });
-            Ok(ParseResult::Stmt(Statement::Break(BreakStatement { label, span })))
+            Ok(ParseResult::Stmt(Statement::Break(BreakStatement {
+                label,
+                span,
+            })))
         } else {
-            Err(ParseError::new("Expected break statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected break statement parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_continue_statement(r: &RuleBuilder) -> Combinator {
@@ -3484,8 +3660,9 @@ fn rule_continue_statement(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("identifier")),
         r.optional(r.parse("semicolon")),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
             let _continue_kw = iter.next();
@@ -3493,12 +3670,18 @@ fn rule_continue_statement(r: &RuleBuilder) -> Combinator {
                 ParseResult::Ident(id) => Some(id),
                 _ => None,
             });
-            Ok(ParseResult::Stmt(Statement::Continue(ContinueStatement { label, span })))
+            Ok(ParseResult::Stmt(Statement::Continue(ContinueStatement {
+                label,
+                span,
+            })))
         } else {
-            Err(ParseError::new("Expected continue statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected continue statement parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_throw_statement(r: &RuleBuilder) -> Combinator {
@@ -3507,8 +3690,9 @@ fn rule_throw_statement(r: &RuleBuilder) -> Combinator {
         r.parse("expression"),
         r.optional(r.parse("semicolon")),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
             let _throw_kw = iter.next();
@@ -3518,68 +3702,84 @@ fn rule_throw_statement(r: &RuleBuilder) -> Combinator {
                 span,
             })))
         } else {
-            Err(ParseError::new("Expected throw statement parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected throw statement parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_debugger_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((kw(r, "debugger"), r.optional(r.parse("semicolon"))))
-        .ast(
-            quote!(|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        .ast(quote!(|_result: ParseResult,
+                     _span: Span|
+         -> Result<ParseResult, ParseError> {
             Ok(ParseResult::Stmt(Statement::Debugger))
-        }),
-        )
+        }))
 }
 
 fn rule_labeled_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((r.parse("identifier"), op(r, ":"), r.parse("statement")))
-        .ast(
-            quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
-        // [label, :, body]
-        if let ParseResult::List(parts) = result {
-            let mut iter = parts.into_iter();
-            let label = iter.next().unwrap_or(ParseResult::None);
-            let _colon = iter.next();
-            let body = iter.next().unwrap_or(ParseResult::None);
+        .ast(quote!(|result: ParseResult,
+                     span: Span|
+         -> Result<ParseResult, ParseError> {
+            // [label, :, body]
+            if let ParseResult::List(parts) = result {
+                let mut iter = parts.into_iter();
+                let label = iter.next().unwrap_or(ParseResult::None);
+                let _colon = iter.next();
+                let body = iter.next().unwrap_or(ParseResult::None);
 
-            let label_id = to_ident(label)?;
-            let body_stmt = match body {
-                ParseResult::Stmt(s) => Rc::new(s),
-                _ => return Err(ParseError::new("Expected statement".to_string(), 0, 0)),
-            };
+                let label_id = to_ident(label)?;
+                let body_stmt = match body {
+                    ParseResult::Stmt(s) => Rc::new(s),
+                    _ => return Err(ParseError::new("Expected statement".to_string(), 0, 0)),
+                };
 
-            Ok(ParseResult::Stmt(Statement::Labeled(LabeledStatement {
-                label: label_id,
-                body: body_stmt,
-                span,
-            })))
-        } else {
-            Err(ParseError::new("Expected labeled statement parts".to_string(), 0, 0))
-        }
-    }),
-        )
+                Ok(ParseResult::Stmt(Statement::Labeled(LabeledStatement {
+                    label: label_id,
+                    body: body_stmt,
+                    span,
+                })))
+            } else {
+                Err(ParseError::new(
+                    "Expected labeled statement parts".to_string(),
+                    0,
+                    0,
+                ))
+            }
+        }))
 }
 
 fn rule_expression_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((r.parse("expression"), r.optional(r.parse("semicolon"))))
-        .ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        .ast(quote!(|result: ParseResult,
+                     span: Span|
+         -> Result<ParseResult, ParseError> {
             let items = result.into_list();
-            let expr = to_expr(items.into_iter().next().ok_or_else(|| ParseError::new("Expected expression".to_string(), 0, 0))?)?;
-            Ok(ParseResult::Stmt(Statement::Expression(ExpressionStatement {
-                expression: Rc::new(expr),
-                span,
-            })))
+            let expr = to_expr(
+                items
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| ParseError::new("Expected expression".to_string(), 0, 0))?,
+            )?;
+            Ok(ParseResult::Stmt(Statement::Expression(
+                ExpressionStatement {
+                    expression: Rc::new(expr),
+                    span,
+                },
+            )))
         }))
 }
 
 fn rule_empty_statement(r: &RuleBuilder) -> Combinator {
-    op(r, ";").ast(
-        quote!(|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    op(r, ";").ast(quote!(|_result: ParseResult,
+                           _span: Span|
+     -> Result<ParseResult, ParseError> {
         Ok(ParseResult::Stmt(Statement::Empty))
-    }),
-    )
+    }))
 }
 
 fn rule_semicolon(r: &RuleBuilder) -> Combinator {
@@ -3591,21 +3791,30 @@ fn rule_semicolon(r: &RuleBuilder) -> Combinator {
 fn rule_declare_statement(r: &RuleBuilder) -> Combinator {
     // TypeScript `declare` keyword for ambient declarations
     // These have no runtime effect - the declaration is parsed and passed through
-    r.sequence((kw(r, "declare"), r.choice((
-        r.parse("declare_global"),  // Must come before declare_module (more specific)
-        r.parse("declare_module"),
-        r.parse("declare_function"),
-        r.parse("declare_namespace"),  // Must use ambient version for function signatures
-        r.parse("variable_declaration"),
-        r.parse("class_declaration"),
-        r.parse("enum_declaration"),
-        r.parse("interface_declaration"),
-        r.parse("type_alias_declaration"),
-    )))).ast(quote!(|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    r.sequence((
+        kw(r, "declare"),
+        r.choice((
+            r.parse("declare_global"), // Must come before declare_module (more specific)
+            r.parse("declare_module"),
+            r.parse("declare_function"),
+            r.parse("declare_namespace"), // Must use ambient version for function signatures
+            r.parse("variable_declaration"),
+            r.parse("class_declaration"),
+            r.parse("enum_declaration"),
+            r.parse("interface_declaration"),
+            r.parse("type_alias_declaration"),
+        )),
+    ))
+    .ast(quote!(|result: ParseResult,
+                       _span: Span|
+     -> Result<ParseResult, ParseError> {
         // Just return the inner declaration, stripping the 'declare' keyword
         let items = result.into_list();
         // The second item is the actual declaration
-        items.into_iter().nth(1).ok_or_else(|| ParseError::new("Expected declaration after declare".to_string(), 0, 0))
+        items
+            .into_iter()
+            .nth(1)
+            .ok_or_else(|| ParseError::new("Expected declaration after declare".to_string(), 0, 0))
     }))
 }
 
@@ -3625,13 +3834,13 @@ fn rule_declare_function(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("return_type_annotation")), // Supports asserts and type predicates
         r.parse("semicolon"),
     ))
-    .ast(
-        quote!(|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|_result: ParseResult,
+                       _span: Span|
+     -> Result<ParseResult, ParseError> {
         // Ambient function declarations are NO-OP at runtime.
         // Return Empty statement so no function binding is created.
         Ok(ParseResult::Stmt(Statement::Empty))
-    }),
-    )
+    }))
 }
 
 fn rule_declare_namespace(r: &RuleBuilder) -> Combinator {
@@ -3644,8 +3853,9 @@ fn rule_declare_namespace(r: &RuleBuilder) -> Combinator {
         r.zero_or_more(r.parse("ambient_statement")),
         op(r, "}"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [namespace, id, {, statements..., }]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3657,27 +3867,31 @@ fn rule_declare_namespace(r: &RuleBuilder) -> Combinator {
 
             let identifier = to_ident(id)?;
             let body_stmts: Vec<Statement> = match body_result {
-                ParseResult::List(items) => {
-                    items.into_iter()
-                        .filter_map(|item| match item {
-                            ParseResult::Stmt(s) => Some(s),
-                            _ => None,
-                        })
-                        .collect()
-                }
+                ParseResult::List(items) => items
+                    .into_iter()
+                    .filter_map(|item| match item {
+                        ParseResult::Stmt(s) => Some(s),
+                        _ => None,
+                    })
+                    .collect(),
                 _ => vec![],
             };
 
-            Ok(ParseResult::Stmt(Statement::NamespaceDeclaration(Box::new(NamespaceDeclaration {
-                id: identifier,
-                body: Rc::from(body_stmts),
-                span,
-            }))))
+            Ok(ParseResult::Stmt(Statement::NamespaceDeclaration(
+                Box::new(NamespaceDeclaration {
+                    id: identifier,
+                    body: Rc::from(body_stmts),
+                    span,
+                }),
+            )))
         } else {
-            Err(ParseError::new("Expected declare namespace parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected declare namespace parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_ambient_statement(r: &RuleBuilder) -> Combinator {
@@ -3703,15 +3917,15 @@ fn rule_declare_global(r: &RuleBuilder) -> Combinator {
         r.zero_or_more(r.parse("statement")),
         op(r, "}"),
     ))
-    .ast(
-        quote!(|_result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|_result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // Return an empty block since declare global is types-only
         Ok(ParseResult::Stmt(Statement::Block(BlockStatement {
             body: Rc::from(vec![]),
             span,
         })))
-    }),
-    )
+    }))
 }
 
 fn rule_declare_module(r: &RuleBuilder) -> Combinator {
@@ -3724,19 +3938,18 @@ fn rule_declare_module(r: &RuleBuilder) -> Combinator {
         r.zero_or_more(r.parse("statement")),
         op(r, "}"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // Parse as a namespace declaration with the string name as identifier
         let mut items = result.into_list().into_iter();
         let _ = items.next(); // skip 'module' keyword
         let name_result = items.next().unwrap_or(ParseResult::None);
         let name_str = match name_result {
-            ParseResult::Expr(Expression::Literal(lit)) => {
-                match lit.value {
-                    LiteralValue::String(s) => s.to_string(),
-                    _ => String::new(),
-                }
-            }
+            ParseResult::Expr(Expression::Literal(lit)) => match lit.value {
+                LiteralValue::String(s) => s.to_string(),
+                _ => String::new(),
+            },
             _ => String::new(),
         };
         let _ = items.next(); // skip '{'
@@ -3747,13 +3960,17 @@ fn rule_declare_module(r: &RuleBuilder) -> Combinator {
                 body.push(stmt);
             }
         }
-        Ok(ParseResult::Stmt(Statement::NamespaceDeclaration(Box::new(NamespaceDeclaration {
-            id: Identifier { name: JsString::from(name_str), span },
-            body: Rc::from(body),
-            span,
-        }))))
-    }),
-    )
+        Ok(ParseResult::Stmt(Statement::NamespaceDeclaration(
+            Box::new(NamespaceDeclaration {
+                id: Identifier {
+                    name: JsString::from(name_str),
+                    span,
+                },
+                body: Rc::from(body),
+                span,
+            }),
+        )))
+    }))
 }
 
 // Import/Export
@@ -3767,8 +3984,9 @@ fn rule_import_declaration(r: &RuleBuilder) -> Combinator {
             r.parse("ws"),
             r.parse("semicolon"),
         ))
-        .ast(
-            quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        .ast(quote!(|result: ParseResult,
+                               span: Span|
+         -> Result<ParseResult, ParseError> {
             // [import, string, ws, semicolon]
             if let ParseResult::List(parts) = result {
                 let mut iter = parts.into_iter();
@@ -3777,22 +3995,34 @@ fn rule_import_declaration(r: &RuleBuilder) -> Combinator {
 
                 let source = if let ParseResult::Text(value, sp) = string_part {
                     let stripped = strip_string_quotes(value.as_ref());
-                    StringLiteral { value: stripped.into(), span: sp }
+                    StringLiteral {
+                        value: stripped.into(),
+                        span: sp,
+                    }
                 } else {
-                    return Err(ParseError::new("Expected import source string".to_string(), 0, 0));
+                    return Err(ParseError::new(
+                        "Expected import source string".to_string(),
+                        0,
+                        0,
+                    ));
                 };
 
-                Ok(ParseResult::Stmt(Statement::Import(Box::new(ImportDeclaration {
-                    specifiers: vec![],
-                    source,
-                    type_only: false,
-                    span,
-                }))))
+                Ok(ParseResult::Stmt(Statement::Import(Box::new(
+                    ImportDeclaration {
+                        specifiers: vec![],
+                        source,
+                        type_only: false,
+                        span,
+                    },
+                ))))
             } else {
-                Err(ParseError::new("Expected import declaration parts".to_string(), 0, 0))
+                Err(ParseError::new(
+                    "Expected import declaration parts".to_string(),
+                    0,
+                    0,
+                ))
             }
-        }),
-        ),
+        })),
         // Regular import with specifiers: import x from "module";
         r.sequence((
             kw(r, "import"),
@@ -3803,8 +4033,9 @@ fn rule_import_declaration(r: &RuleBuilder) -> Combinator {
             r.parse("ws"),
             r.parse("semicolon"),
         ))
-        .ast(
-            quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        .ast(quote!(|result: ParseResult,
+                               span: Span|
+         -> Result<ParseResult, ParseError> {
             // [import, type?, import_clause, from, string, ws, semicolon]
             if let ParseResult::List(parts) = result {
                 let mut iter = parts.into_iter();
@@ -3819,25 +4050,37 @@ fn rule_import_declaration(r: &RuleBuilder) -> Combinator {
                 // Parse source string
                 let source = if let ParseResult::Text(value, sp) = string_part {
                     let stripped = strip_string_quotes(value.as_ref());
-                    StringLiteral { value: stripped.into(), span: sp }
+                    StringLiteral {
+                        value: stripped.into(),
+                        span: sp,
+                    }
                 } else {
-                    return Err(ParseError::new("Expected import source string".to_string(), 0, 0));
+                    return Err(ParseError::new(
+                        "Expected import source string".to_string(),
+                        0,
+                        0,
+                    ));
                 };
 
                 // Parse import clause into specifiers
                 let specifiers = parse_import_clause(clause_part, span.clone());
 
-                Ok(ParseResult::Stmt(Statement::Import(Box::new(ImportDeclaration {
-                    specifiers,
-                    source,
-                    type_only,
-                    span,
-                }))))
+                Ok(ParseResult::Stmt(Statement::Import(Box::new(
+                    ImportDeclaration {
+                        specifiers,
+                        source,
+                        type_only,
+                        span,
+                    },
+                ))))
             } else {
-                Err(ParseError::new("Expected import declaration parts".to_string(), 0, 0))
+                Err(ParseError::new(
+                    "Expected import declaration parts".to_string(),
+                    0,
+                    0,
+                ))
             }
-        }),
-        ),
+        })),
     ))
 }
 
@@ -3879,19 +4122,24 @@ fn rule_export_declaration(r: &RuleBuilder) -> Combinator {
         // Variant 1: export default expression/declaration
         r.sequence((
             kw(r, "export"),
-            r.capture(r.lit("default")),  // Capture "default" to distinguish from variant 4
+            r.capture(r.lit("default")), // Capture "default" to distinguish from variant 4
             r.parse("ws"),
             r.parse("export_default_expression"),
-        )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        ))
+        .ast(quote!(|result: ParseResult,
+                               span: Span|
+         -> Result<ParseResult, ParseError> {
             // [export, "default", ws, expr/stmt]
             if let ParseResult::List(parts) = result {
                 let decl_part = parts.into_iter().nth(3).unwrap_or(ParseResult::None);
                 let declaration = match decl_part {
                     ParseResult::Stmt(s) => Some(Box::new(s)),
-                    ParseResult::Expr(e) => Some(Box::new(Statement::Expression(ExpressionStatement {
-                        expression: Rc::new(e),
-                        span: span.clone(),
-                    }))),
+                    ParseResult::Expr(e) => {
+                        Some(Box::new(Statement::Expression(ExpressionStatement {
+                            expression: Rc::new(e),
+                            span: span.clone(),
+                        })))
+                    }
                     ParseResult::List(inner) => {
                         // expression + semicolon case
                         if let Some(ParseResult::Expr(e)) = inner.into_iter().next() {
@@ -3905,17 +4153,23 @@ fn rule_export_declaration(r: &RuleBuilder) -> Combinator {
                     }
                     _ => None,
                 };
-                Ok(ParseResult::Stmt(Statement::Export(Box::new(ExportDeclaration {
-                    declaration,
-                    specifiers: vec![],
-                    source: None,
-                    namespace_export: None,
-                    default: true,
-                    type_only: false,
-                    span,
-                }))))
+                Ok(ParseResult::Stmt(Statement::Export(Box::new(
+                    ExportDeclaration {
+                        declaration,
+                        specifiers: vec![],
+                        source: None,
+                        namespace_export: None,
+                        default: true,
+                        type_only: false,
+                        span,
+                    },
+                ))))
             } else {
-                Err(ParseError::new("Expected export default parts".to_string(), 0, 0))
+                Err(ParseError::new(
+                    "Expected export default parts".to_string(),
+                    0,
+                    0,
+                ))
             }
         })),
         // Variant 2: export { named } from "source"
@@ -3925,7 +4179,10 @@ fn rule_export_declaration(r: &RuleBuilder) -> Combinator {
             r.parse("named_exports"),
             r.optional(r.sequence((kw(r, "from"), r.parse("string_literal"), r.parse("ws")))),
             r.parse("semicolon"),
-        )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        ))
+        .ast(quote!(|result: ParseResult,
+                               span: Span|
+         -> Result<ParseResult, ParseError> {
             // [export, type?, named_exports, (from, string, ws)?, semicolon]
             if let ParseResult::List(parts) = result {
                 let mut iter = parts.into_iter();
@@ -3954,7 +4211,10 @@ fn rule_export_declaration(r: &RuleBuilder) -> Combinator {
                     from_parts.into_iter().nth(1).and_then(|s| {
                         if let ParseResult::Text(value, sp) = s {
                             let stripped = strip_string_quotes(value.as_ref());
-                            Some(StringLiteral { value: stripped.into(), span: sp })
+                            Some(StringLiteral {
+                                value: stripped.into(),
+                                span: sp,
+                            })
                         } else {
                             None
                         }
@@ -3963,17 +4223,23 @@ fn rule_export_declaration(r: &RuleBuilder) -> Combinator {
                     None
                 };
 
-                Ok(ParseResult::Stmt(Statement::Export(Box::new(ExportDeclaration {
-                    declaration: None,
-                    specifiers,
-                    source,
-                    namespace_export: None,
-                    default: false,
-                    type_only,
-                    span,
-                }))))
+                Ok(ParseResult::Stmt(Statement::Export(Box::new(
+                    ExportDeclaration {
+                        declaration: None,
+                        specifiers,
+                        source,
+                        namespace_export: None,
+                        default: false,
+                        type_only,
+                        span,
+                    },
+                ))))
             } else {
-                Err(ParseError::new("Expected named export parts".to_string(), 0, 0))
+                Err(ParseError::new(
+                    "Expected named export parts".to_string(),
+                    0,
+                    0,
+                ))
             }
         })),
         // Variant 3: export [type] * as ns from "source"
@@ -3986,7 +4252,10 @@ fn rule_export_declaration(r: &RuleBuilder) -> Combinator {
             r.parse("string_literal"),
             r.parse("ws"),
             r.parse("semicolon"),
-        )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        ))
+        .ast(quote!(|result: ParseResult,
+                               span: Span|
+         -> Result<ParseResult, ParseError> {
             // [export, type?, *, (as, ident)?, from, string, ws, semicolon]
             if let ParseResult::List(parts) = result {
                 let mut iter = parts.into_iter();
@@ -4015,22 +4284,31 @@ fn rule_export_declaration(r: &RuleBuilder) -> Combinator {
                 // Parse source string (strip quotes)
                 let source = if let ParseResult::Text(value, sp) = string_part {
                     let stripped = strip_string_quotes(value.as_ref());
-                    Some(StringLiteral { value: stripped.into(), span: sp })
+                    Some(StringLiteral {
+                        value: stripped.into(),
+                        span: sp,
+                    })
                 } else {
                     None
                 };
 
-                Ok(ParseResult::Stmt(Statement::Export(Box::new(ExportDeclaration {
-                    declaration: None,
-                    specifiers: vec![],
-                    source,
-                    namespace_export,
-                    default: false,
-                    type_only,
-                    span,
-                }))))
+                Ok(ParseResult::Stmt(Statement::Export(Box::new(
+                    ExportDeclaration {
+                        declaration: None,
+                        specifiers: vec![],
+                        source,
+                        namespace_export,
+                        default: false,
+                        type_only,
+                        span,
+                    },
+                ))))
             } else {
-                Err(ParseError::new("Expected namespace export parts".to_string(), 0, 0))
+                Err(ParseError::new(
+                    "Expected namespace export parts".to_string(),
+                    0,
+                    0,
+                ))
             }
         })),
         // Variant 4: export declaration
@@ -4038,7 +4316,10 @@ fn rule_export_declaration(r: &RuleBuilder) -> Combinator {
             kw(r, "export"),
             r.optional(kw(r, "type")),
             r.parse("exportable_declaration"),
-        )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        ))
+        .ast(quote!(|result: ParseResult,
+                               span: Span|
+         -> Result<ParseResult, ParseError> {
             // [export, type?, declaration]
             if let ParseResult::List(parts) = result {
                 let mut iter = parts.into_iter();
@@ -4052,17 +4333,23 @@ fn rule_export_declaration(r: &RuleBuilder) -> Combinator {
                     _ => None,
                 };
 
-                Ok(ParseResult::Stmt(Statement::Export(Box::new(ExportDeclaration {
-                    declaration,
-                    specifiers: vec![],
-                    source: None,
-                    namespace_export: None,
-                    default: false,
-                    type_only,
-                    span,
-                }))))
+                Ok(ParseResult::Stmt(Statement::Export(Box::new(
+                    ExportDeclaration {
+                        declaration,
+                        specifiers: vec![],
+                        source: None,
+                        namespace_export: None,
+                        default: false,
+                        type_only,
+                        span,
+                    },
+                ))))
             } else {
-                Err(ParseError::new("Expected export declaration parts".to_string(), 0, 0))
+                Err(ParseError::new(
+                    "Expected export declaration parts".to_string(),
+                    0,
+                    0,
+                ))
             }
         })),
     ))
@@ -4114,8 +4401,9 @@ fn rule_type_alias_declaration(r: &RuleBuilder) -> Combinator {
         r.parse("type"),
         r.parse("semicolon"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [type, id, type_params?, =, type, ;]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -4126,21 +4414,26 @@ fn rule_type_alias_declaration(r: &RuleBuilder) -> Combinator {
             let _type_annotation = iter.next();
             // TypeAlias is a no-op at runtime, so we create a placeholder type
             let identifier = to_ident(id)?;
-            Ok(ParseResult::Stmt(Statement::TypeAlias(Box::new(TypeAliasDeclaration {
-                id: identifier,
-                type_parameters: None,
-                // Placeholder: any type since we don't type-check at runtime
-                type_annotation: Box::new(TypeAnnotation::Keyword(TypeKeyword {
-                    keyword: TypeKeywordKind::Any,
+            Ok(ParseResult::Stmt(Statement::TypeAlias(Box::new(
+                TypeAliasDeclaration {
+                    id: identifier,
+                    type_parameters: None,
+                    // Placeholder: any type since we don't type-check at runtime
+                    type_annotation: Box::new(TypeAnnotation::Keyword(TypeKeyword {
+                        keyword: TypeKeywordKind::Any,
+                        span,
+                    })),
                     span,
-                })),
-                span,
-            }))))
+                },
+            ))))
         } else {
-            Err(ParseError::new("Expected type alias declaration parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected type alias declaration parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_interface_declaration(r: &RuleBuilder) -> Combinator {
@@ -4154,8 +4447,9 @@ fn rule_interface_declaration(r: &RuleBuilder) -> Combinator {
         ))),
         r.parse("object_type"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [interface, id, type_params?, extends?, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -4168,18 +4462,23 @@ fn rule_interface_declaration(r: &RuleBuilder) -> Combinator {
             let identifier = to_ident(id)?;
 
             // Types are stripped at runtime, so we use empty body
-            Ok(ParseResult::Stmt(Statement::InterfaceDeclaration(Box::new(InterfaceDeclaration {
-                id: identifier,
-                type_parameters: None,
-                extends: vec![],
-                body: vec![],
-                span,
-            }))))
+            Ok(ParseResult::Stmt(Statement::InterfaceDeclaration(
+                Box::new(InterfaceDeclaration {
+                    id: identifier,
+                    type_parameters: None,
+                    extends: vec![],
+                    body: vec![],
+                    span,
+                }),
+            )))
         } else {
-            Err(ParseError::new("Expected interface declaration parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected interface declaration parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_enum_declaration(r: &RuleBuilder) -> Combinator {
@@ -4191,8 +4490,9 @@ fn rule_enum_declaration(r: &RuleBuilder) -> Combinator {
         r.optional(r.separated_by_trailing(r.parse("enum_member"), op(r, ","))),
         op(r, "}"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [const?, enum, name, {, members?, }]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -4204,10 +4504,13 @@ fn rule_enum_declaration(r: &RuleBuilder) -> Combinator {
             let _close_brace = iter.next(); // skip }
             create_enum_decl(const_kw, name, members, span)
         } else {
-            Err(ParseError::new("Expected enum declaration parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected enum declaration parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_enum_member(r: &RuleBuilder) -> Combinator {
@@ -4224,8 +4527,9 @@ fn rule_namespace_declaration(r: &RuleBuilder) -> Combinator {
         r.parse("identifier"),
         r.parse("block_statement"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [namespace, id, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -4239,16 +4543,21 @@ fn rule_namespace_declaration(r: &RuleBuilder) -> Combinator {
                 _ => vec![],
             };
 
-            Ok(ParseResult::Stmt(Statement::NamespaceDeclaration(Box::new(NamespaceDeclaration {
-                id: identifier,
-                body: Rc::from(body_stmts),
-                span,
-            }))))
+            Ok(ParseResult::Stmt(Statement::NamespaceDeclaration(
+                Box::new(NamespaceDeclaration {
+                    id: identifier,
+                    body: Rc::from(body_stmts),
+                    span,
+                }),
+            )))
         } else {
-            Err(ParseError::new("Expected namespace declaration parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected namespace declaration parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 // Expressions
@@ -4260,8 +4569,9 @@ fn rule_expression(r: &RuleBuilder) -> Combinator {
         r.parse("assignment_expression"),
         r.zero_or_more(r.sequence((op(r, ","), r.parse("assignment_expression")))),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         let items = result.into_list();
         let mut iter = items.into_iter();
         let first = iter.next().unwrap_or(ParseResult::None);
@@ -4284,15 +4594,13 @@ fn rule_expression(r: &RuleBuilder) -> Combinator {
             if expressions.len() == 1 {
                 return Ok(ParseResult::Expr(expressions.remove(0)));
             }
-            Ok(ParseResult::Expr(Expression::Sequence(SequenceExpression {
-                expressions,
-                span,
-            })))
+            Ok(ParseResult::Expr(Expression::Sequence(
+                SequenceExpression { expressions, span },
+            )))
         } else {
             Ok(first)
         }
-    }),
-    )
+    }))
 }
 
 /// Assignment expression (everything except comma operator)
@@ -4602,10 +4910,26 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                     16,
                     quote!(|e, s| update(e, UpdateOp::Decrement, true, s)),
                 )
-                .prefix(ws_prefix(r, "-"), 16, quote!(|e, s| unary(e, UnaryOp::Minus, s)))
-                .prefix(ws_prefix(r, "+"), 16, quote!(|e, s| unary(e, UnaryOp::Plus, s)))
-                .prefix(ws_prefix(r, "!"), 16, quote!(|e, s| unary(e, UnaryOp::Not, s)))
-                .prefix(ws_prefix(r, "~"), 16, quote!(|e, s| unary(e, UnaryOp::BitNot, s)))
+                .prefix(
+                    ws_prefix(r, "-"),
+                    16,
+                    quote!(|e, s| unary(e, UnaryOp::Minus, s)),
+                )
+                .prefix(
+                    ws_prefix(r, "+"),
+                    16,
+                    quote!(|e, s| unary(e, UnaryOp::Plus, s)),
+                )
+                .prefix(
+                    ws_prefix(r, "!"),
+                    16,
+                    quote!(|e, s| unary(e, UnaryOp::Not, s)),
+                )
+                .prefix(
+                    ws_prefix(r, "~"),
+                    16,
+                    quote!(|e, s| unary(e, UnaryOp::BitNot, s)),
+                )
                 .prefix(
                     ws_prefix_kw(r, "typeof"),
                     16,
@@ -4621,10 +4945,22 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                     16,
                     quote!(|e, s| unary(e, UnaryOp::Delete, s)),
                 )
-                .prefix(ws_prefix_kw(r, "await"), 16, quote!(|e, s| await_expr(e, s)))
+                .prefix(
+                    ws_prefix_kw(r, "await"),
+                    16,
+                    quote!(|e, s| await_expr(e, s)),
+                )
                 // === Postfix operators (highest precedence) ===
-                .postfix("++", 17, quote!(|e, s| update(e, UpdateOp::Increment, false, s)))
-                .postfix("--", 17, quote!(|e, s| update(e, UpdateOp::Decrement, false, s)))
+                .postfix(
+                    "++",
+                    17,
+                    quote!(|e, s| update(e, UpdateOp::Increment, false, s)),
+                )
+                .postfix(
+                    "--",
+                    17,
+                    quote!(|e, s| update(e, UpdateOp::Decrement, false, s)),
+                )
                 // TypeScript non-null assertion: x! (must not be followed by = to avoid conflict with !=)
                 .postfix(
                     r.sequence((r.lit("!"), r.not_followed_by(r.lit("=")))),
@@ -4650,8 +4986,18 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                     quote!(|c, a, s| call(c, a, false, s)),
                 )
                 // Computed member (optional chaining first, must come before ?. to match longer pattern)
-                .postfix_index("?.[", "]", 18, quote!(|o, e, s| member_computed(o, e, true, s)))
-                .postfix_index("[", "]", 18, quote!(|o, e, s| member_computed(o, e, false, s)))
+                .postfix_index(
+                    "?.[",
+                    "]",
+                    18,
+                    quote!(|o, e, s| member_computed(o, e, true, s)),
+                )
+                .postfix_index(
+                    "[",
+                    "]",
+                    18,
+                    quote!(|o, e, s| member_computed(o, e, false, s)),
+                )
                 // Member access (optional chaining first to match longer pattern)
                 // Note: ?. must come after ?.[ to avoid matching prefix of ?.[
                 .postfix_member("?.", 18, quote!(|o, p, s| member(o, p, true, s)))
@@ -4672,8 +5018,9 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
             r.parse("type"),
         ))),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // Extract the expression and as-clause count
         if let ParseResult::List(items) = result {
             let mut iter = items.into_iter();
@@ -4697,8 +5044,7 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
         } else {
             Ok(result)
         }
-    }),
-    )
+    }))
 }
 
 fn rule_primary(r: &RuleBuilder) -> Combinator {
@@ -4706,16 +5052,17 @@ fn rule_primary(r: &RuleBuilder) -> Combinator {
     // Memoized to avoid exponential backtracking on deeply nested expressions
     r.memoize(
         0,
-        r.sequence((r.parse("ws"), r.parse("primary_inner"))).ast(
-            quote!(|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
-        // Return the second element (primary_inner), skip the ws
-        if let ParseResult::List(mut items) = result {
-            Ok(items.pop().unwrap_or(ParseResult::None))
-        } else {
-            Ok(result)
-        }
-    }),
-        ),
+        r.sequence((r.parse("ws"), r.parse("primary_inner")))
+            .ast(quote!(|result: ParseResult,
+                         _span: Span|
+             -> Result<ParseResult, ParseError> {
+                // Return the second element (primary_inner), skip the ws
+                if let ParseResult::List(mut items) = result {
+                    Ok(items.pop().unwrap_or(ParseResult::None))
+                } else {
+                    Ok(result)
+                }
+            })),
     )
 }
 
@@ -4743,15 +5090,19 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
         r.memoize(1, r.parse("generic_call_expression")),
         // identifier last since it matches most things
         // Reserved keywords cannot be used as identifier expressions
-        r.parse("identifier").ast(
-            quote!(|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        r.parse("identifier").ast(quote!(|result: ParseResult,
+                                          _span: Span|
+         -> Result<ParseResult, ParseError> {
             let ident = to_ident(result)?;
             if is_reserved_keyword(ident.name.as_ref()) {
-                return Err(ParseError::new(format!("'{}' is a reserved word", ident.name), 0, 0));
+                return Err(ParseError::new(
+                    format!("'{}' is a reserved word", ident.name),
+                    0,
+                    0,
+                ));
             }
             Ok(ParseResult::Expr(Expression::Identifier(ident)))
-        }),
-        ),
+        })),
     ])
 }
 
@@ -4761,15 +5112,19 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
 fn rule_new_callee(r: &RuleBuilder) -> Combinator {
     // Use Pratt parser with only member access postfixes (no calls)
     let base = r.choice(vec![
-        r.parse("identifier").ast(
-            quote!(|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        r.parse("identifier").ast(quote!(|result: ParseResult,
+                                          _span: Span|
+         -> Result<ParseResult, ParseError> {
             let ident = to_ident(result)?;
             if is_reserved_keyword(ident.name.as_ref()) {
-                return Err(ParseError::new(format!("'{}' is a reserved word", ident.name), 0, 0));
+                return Err(ParseError::new(
+                    format!("'{}' is a reserved word", ident.name),
+                    0,
+                    0,
+                ));
             }
             Ok(ParseResult::Expr(Expression::Identifier(ident)))
-        }),
-        ),
+        })),
         r.parse("parenthesized"),
     ]);
 
@@ -4778,38 +5133,86 @@ fn rule_new_callee(r: &RuleBuilder) -> Combinator {
             // Member access: obj.prop
             .postfix_member(".", 18, quote!(|o, p, s| member(o, p, false, s)))
             // Computed member: obj[expr]
-            .postfix_index("[", "]", 18, quote!(|o, e, s| member_computed(o, e, false, s)))
+            .postfix_index(
+                "[",
+                "]",
+                18,
+                quote!(|o, e, s| member_computed(o, e, false, s)),
+            )
     })
 }
 
 fn rule_literal(r: &RuleBuilder) -> Combinator {
     r.choice((
-        r.sequence((r.parse("number_literal"), r.parse("ws"))).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
-            let text = result.into_text();
-            // Check for legacy octal (strict mode error): starts with 0, followed by digits, no prefix
-            let s = text.as_ref();
-            if s.len() > 1 && s.starts_with('0') {
-                let second = s.chars().nth(1).unwrap_or(' ');
-                if second.is_ascii_digit() && second != '.' {
-                    return Err(ParseError { message: String::from("Octal literals are not allowed in strict mode"), span });
+        r.sequence((r.parse("number_literal"), r.parse("ws")))
+            .ast(quote!(|result: ParseResult,
+                         span: Span|
+             -> Result<ParseResult, ParseError> {
+                let text = result.into_text();
+                // Check for legacy octal (strict mode error): starts with 0, followed by digits, no prefix
+                let s = text.as_ref();
+                if s.len() > 1 && s.starts_with('0') {
+                    let second = s.chars().nth(1).unwrap_or(' ');
+                    if second.is_ascii_digit() && second != '.' {
+                        return Err(ParseError {
+                            message: String::from("Octal literals are not allowed in strict mode"),
+                            span,
+                        });
+                    }
                 }
-            }
-            let value = parse_number(&text);
-            Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Number(value), span }))))
+                let value = parse_number(&text);
+                Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal {
+                    value: LiteralValue::Number(value),
+                    span,
+                }))))
+            })),
+        r.sequence((r.parse("string_literal"), r.parse("ws")))
+            .ast(quote!(|result: ParseResult,
+                         span: Span|
+             -> Result<ParseResult, ParseError> {
+                let text = result.into_text();
+                let value =
+                    parse_string_literal(&text).map_err(|e| ParseError { message: e, span })?;
+                Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal {
+                    value: LiteralValue::String(value),
+                    span,
+                }))))
+            })),
+        r.sequence((r.parse("regexp_literal"), r.parse("ws")))
+            .ast(quote!(|result: ParseResult,
+                         span: Span|
+             -> Result<ParseResult, ParseError> {
+                let text = result.into_text();
+                let (pattern, flags) = parse_regexp_literal(&text);
+                Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal {
+                    value: LiteralValue::RegExp { pattern, flags },
+                    span,
+                }))))
+            })),
+        kw(r, "true").ast(quote!(|_: ParseResult,
+                                  span: Span|
+         -> Result<ParseResult, ParseError> {
+            Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal {
+                value: LiteralValue::Boolean(true),
+                span,
+            }))))
         })),
-        r.sequence((r.parse("string_literal"), r.parse("ws"))).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
-            let text = result.into_text();
-            let value = parse_string_literal(&text).map_err(|e| ParseError { message: e, span })?;
-            Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::String(value), span }))))
+        kw(r, "false").ast(quote!(|_: ParseResult,
+                                   span: Span|
+         -> Result<ParseResult, ParseError> {
+            Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal {
+                value: LiteralValue::Boolean(false),
+                span,
+            }))))
         })),
-        r.sequence((r.parse("regexp_literal"), r.parse("ws"))).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
-            let text = result.into_text();
-            let (pattern, flags) = parse_regexp_literal(&text);
-            Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::RegExp { pattern, flags }, span }))))
+        kw(r, "null").ast(quote!(|_: ParseResult,
+                                  span: Span|
+         -> Result<ParseResult, ParseError> {
+            Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal {
+                value: LiteralValue::Null,
+                span,
+            }))))
         })),
-        kw(r, "true").ast(quote!(|_: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Boolean(true), span })))) })),
-        kw(r, "false").ast(quote!(|_: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Boolean(false), span })))) })),
-        kw(r, "null").ast(quote!(|_: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Null, span })))) })),
         // Note: undefined is NOT a literal - it's an identifier that refers to the global undefined value
     ))
 }
@@ -4840,28 +5243,28 @@ fn rule_identifier(r: &RuleBuilder) -> Combinator {
         r.capture(r.sequence((ident_start_or_escape, r.zero_or_more(ident_cont_or_escape)))),
         r.parse("ws"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         let name = decode_identifier(&result.into_text());
         Ok(ParseResult::Ident(Identifier { name, span }))
-    }),
-    )
+    }))
 }
 
 fn rule_this_expression(r: &RuleBuilder) -> Combinator {
-    kw(r, "this").ast(
-        quote!(|_result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    kw(r, "this").ast(quote!(|_result: ParseResult,
+                              span: Span|
+     -> Result<ParseResult, ParseError> {
         Ok(ParseResult::Expr(Expression::This(span)))
-    }),
-    )
+    }))
 }
 
 fn rule_super_expression(r: &RuleBuilder) -> Combinator {
-    kw(r, "super").ast(
-        quote!(|_result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    kw(r, "super").ast(quote!(|_result: ParseResult,
+                               span: Span|
+     -> Result<ParseResult, ParseError> {
         Ok(ParseResult::Expr(Expression::Super(span)))
-    }),
-    )
+    }))
 }
 
 fn rule_array_expression(r: &RuleBuilder) -> Combinator {
@@ -4878,11 +5281,11 @@ fn rule_array_expression(r: &RuleBuilder) -> Combinator {
         ))),
         op(r, "]"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         create_array_expr(result, span)
-    }),
-    )
+    }))
 }
 
 fn rule_array_element(r: &RuleBuilder) -> Combinator {
@@ -4896,11 +5299,11 @@ fn rule_object_expression(r: &RuleBuilder) -> Combinator {
         r.optional(r.separated_by_trailing(r.parse("object_property"), op(r, ","))),
         op(r, "}"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         create_object_expr(result, span)
-    }),
-    )
+    }))
 }
 
 fn rule_object_property(r: &RuleBuilder) -> Combinator {
@@ -4995,8 +5398,9 @@ fn rule_function_expression(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("return_type_annotation")), // Supports asserts and type predicates
         r.parse("block_statement"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [async?, function, *, name?, type_params?, (, params?, ), type_ann?, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -5020,24 +5424,32 @@ fn rule_function_expression(r: &RuleBuilder) -> Combinator {
             let params_vec = params_to_vec(params, &span);
             let body_block = match body {
                 ParseResult::Stmt(Statement::Block(b)) => Rc::new(b),
-                _ => Rc::new(BlockStatement { body: Rc::from(vec![]), span: span.clone() }),
+                _ => Rc::new(BlockStatement {
+                    body: Rc::from(vec![]),
+                    span: span.clone(),
+                }),
             };
 
-            Ok(ParseResult::Expr(Expression::Function(Box::new(FunctionExpression {
-                id,
-                params: Rc::from(params_vec),
-                return_type: None,
-                type_parameters: None,
-                body: body_block,
-                generator: is_generator,
-                async_: is_async,
-                span,
-            }))))
+            Ok(ParseResult::Expr(Expression::Function(Box::new(
+                FunctionExpression {
+                    id,
+                    params: Rc::from(params_vec),
+                    return_type: None,
+                    type_parameters: None,
+                    body: body_block,
+                    generator: is_generator,
+                    async_: is_async,
+                    span,
+                },
+            ))))
         } else {
-            Err(ParseError::new("Expected function expression parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected function expression parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
@@ -5053,25 +5465,29 @@ fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
             op(r, "=>"),
             r.parse("arrow_body"),
         ))
-        .ast(
-            quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        .ast(quote!(|result: ParseResult,
+                               span: Span|
+         -> Result<ParseResult, ParseError> {
             // [async?, type_params?, (, params?, ), return_type?, =>, body]
             if let ParseResult::List(items) = result {
                 let mut iter = items.into_iter();
                 let async_kw = iter.next().unwrap_or(ParseResult::None);
                 let _type_params = iter.next(); // skip type params
-                let _open_paren = iter.next();  // skip (
+                let _open_paren = iter.next(); // skip (
                 let params = iter.next().unwrap_or(ParseResult::None);
                 let _close_paren = iter.next(); // skip )
                 let _return_type = iter.next(); // skip return type
-                let _arrow = iter.next();       // skip =>
+                let _arrow = iter.next(); // skip =>
                 let body = iter.next().unwrap_or(ParseResult::None);
                 arrow_function_parens(async_kw, params, body, span)
             } else {
-                Err(ParseError::new("Expected arrow function parts".to_string(), 0, 0))
+                Err(ParseError::new(
+                    "Expected arrow function parts".to_string(),
+                    0,
+                    0,
+                ))
             }
-        }),
-        ),
+        })),
         // Single unparenthesized param: x => body
         r.sequence((
             r.optional(kw(r, "async")),
@@ -5079,8 +5495,9 @@ fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
             op(r, "=>"),
             r.parse("arrow_body"),
         ))
-        .ast(
-            quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        .ast(quote!(|result: ParseResult,
+                               span: Span|
+         -> Result<ParseResult, ParseError> {
             // [async?, identifier, =>, body]
             if let ParseResult::List(items) = result {
                 let mut iter = items.into_iter();
@@ -5090,10 +5507,13 @@ fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
                 let body = iter.next().unwrap_or(ParseResult::None);
                 arrow_function_single(async_kw, param, body, span)
             } else {
-                Err(ParseError::new("Expected arrow function parts".to_string(), 0, 0))
+                Err(ParseError::new(
+                    "Expected arrow function parts".to_string(),
+                    0,
+                    0,
+                ))
             }
-        }),
-        ),
+        })),
     ))
 }
 
@@ -5121,8 +5541,9 @@ fn rule_class_expression(r: &RuleBuilder) -> Combinator {
         ))),
         r.parse("class_body"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [decorators, class, name?, type_params?, extends?, implements?, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -5136,10 +5557,13 @@ fn rule_class_expression(r: &RuleBuilder) -> Combinator {
 
             create_class_expr(decorators, name, extends_clause, body, span)
         } else {
-            Err(ParseError::new("Expected class expression parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected class expression parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_template_literal(r: &RuleBuilder) -> Combinator {
@@ -5158,7 +5582,9 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
             r.parse("ws"),
         )),
     ))
-    .ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         let items = result.into_list();
         // Check if this is a simple template or one with expressions
         // Simple: [template_string_text, ws]
@@ -5166,25 +5592,32 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
 
         if items.len() == 2 {
             // Simple template string `hello`
-            let text = items.into_iter().next().unwrap_or(ParseResult::None).into_text();
+            let text = items
+                .into_iter()
+                .next()
+                .unwrap_or(ParseResult::None)
+                .into_text();
             let text_str = text.as_ref();
             // Remove backticks from both ends and decode escapes
-            let content: JsString = if text_str.starts_with('`') && text_str.ends_with('`') && text_str.len() >= 2 {
-                decode_escape_sequences(text_str.get(1..text_str.len()-1).unwrap_or(""))
-                    .map_err(|e| ParseError::new(e, 0, 0))?
-            } else {
-                text
-            };
+            let content: JsString =
+                if text_str.starts_with('`') && text_str.ends_with('`') && text_str.len() >= 2 {
+                    decode_escape_sequences(text_str.get(1..text_str.len() - 1).unwrap_or(""))
+                        .map_err(|e| ParseError::new(e, 0, 0))?
+                } else {
+                    text
+                };
             let quasis = vec![TemplateElement {
                 value: content,
                 tail: true,
                 span: span.clone(),
             }];
-            Ok(ParseResult::Expr(Expression::Template(Box::new(TemplateLiteral {
-                quasis,
-                expressions: vec![],
-                span,
-            }))))
+            Ok(ParseResult::Expr(Expression::Template(Box::new(
+                TemplateLiteral {
+                    quasis,
+                    expressions: vec![],
+                    span,
+                },
+            ))))
         } else {
             // Template with expressions: [head, ws, expr, middles_list, tail, ws]
             let mut iter = items.into_iter();
@@ -5199,12 +5632,13 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
 
             // Parse head: `xxx${  ->  xxx (and decode escapes)
             let head_str = head_text.as_ref();
-            let head_content: JsString = if head_str.starts_with('`') && head_str.ends_with("${") && head_str.len() >= 3 {
-                decode_escape_sequences(head_str.get(1..head_str.len()-2).unwrap_or(""))
-                    .map_err(|e| ParseError::new(e, 0, 0))?
-            } else {
-                head_text
-            };
+            let head_content: JsString =
+                if head_str.starts_with('`') && head_str.ends_with("${") && head_str.len() >= 3 {
+                    decode_escape_sequences(head_str.get(1..head_str.len() - 2).unwrap_or(""))
+                        .map_err(|e| ParseError::new(e, 0, 0))?
+                } else {
+                    head_text
+                };
             quasis.push(TemplateElement {
                 value: head_content,
                 tail: false,
@@ -5222,9 +5656,14 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
 
                         // Parse middle: }xxx${  ->  xxx (and decode escapes)
                         let middle_str = middle_text.as_ref();
-                        let middle_content: JsString = if middle_str.starts_with('}') && middle_str.ends_with("${") && middle_str.len() >= 3 {
-                            decode_escape_sequences(middle_str.get(1..middle_str.len()-2).unwrap_or(""))
-                                .map_err(|e| ParseError::new(e, 0, 0))?
+                        let middle_content: JsString = if middle_str.starts_with('}')
+                            && middle_str.ends_with("${")
+                            && middle_str.len() >= 3
+                        {
+                            decode_escape_sequences(
+                                middle_str.get(1..middle_str.len() - 2).unwrap_or(""),
+                            )
+                            .map_err(|e| ParseError::new(e, 0, 0))?
                         } else {
                             middle_text
                         };
@@ -5240,23 +5679,26 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
 
             // Parse tail: }xxx`  ->  xxx (and decode escapes)
             let tail_str = tail_text.as_ref();
-            let tail_content: JsString = if tail_str.starts_with('}') && tail_str.ends_with('`') && tail_str.len() >= 2 {
-                decode_escape_sequences(tail_str.get(1..tail_str.len()-1).unwrap_or(""))
-                    .map_err(|e| ParseError::new(e, 0, 0))?
-            } else {
-                tail_text
-            };
+            let tail_content: JsString =
+                if tail_str.starts_with('}') && tail_str.ends_with('`') && tail_str.len() >= 2 {
+                    decode_escape_sequences(tail_str.get(1..tail_str.len() - 1).unwrap_or(""))
+                        .map_err(|e| ParseError::new(e, 0, 0))?
+                } else {
+                    tail_text
+                };
             quasis.push(TemplateElement {
                 value: tail_content,
                 tail: true,
                 span: span.clone(),
             });
 
-            Ok(ParseResult::Expr(Expression::Template(Box::new(TemplateLiteral {
-                quasis,
-                expressions,
-                span,
-            }))))
+            Ok(ParseResult::Expr(Expression::Template(Box::new(
+                TemplateLiteral {
+                    quasis,
+                    expressions,
+                    span,
+                },
+            ))))
         }
     }))
 }
@@ -5268,8 +5710,9 @@ fn rule_new_expression(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("type_arguments")), // Type arguments like <void> or <string, number>
         r.optional(r.sequence((op(r, "("), r.optional(r.parse("argument_list")), op(r, ")")))),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [new, callee, type_args?, args?]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -5290,11 +5733,10 @@ fn rule_new_expression(r: &RuleBuilder) -> Combinator {
                     let _close_paren = arg_iter.next();
 
                     match args_list {
-                        ParseResult::List(items) => {
-                            items.into_iter().filter_map(|a| {
-                                parse_result_to_argument(a).ok()
-                            }).collect()
-                        }
+                        ParseResult::List(items) => items
+                            .into_iter()
+                            .filter_map(|a| parse_result_to_argument(a).ok())
+                            .collect(),
                         ParseResult::None => vec![],
                         other => {
                             if let Ok(arg) = parse_result_to_argument(other) {
@@ -5308,17 +5750,22 @@ fn rule_new_expression(r: &RuleBuilder) -> Combinator {
                 _ => vec![],
             };
 
-            Ok(ParseResult::Expr(Expression::New(Box::new(NewExpression {
-                callee: Rc::new(to_expr(callee)?),
-                arguments,
-                type_arguments,
-                span,
-            }))))
+            Ok(ParseResult::Expr(Expression::New(Box::new(
+                NewExpression {
+                    callee: Rc::new(to_expr(callee)?),
+                    arguments,
+                    type_arguments,
+                    span,
+                },
+            ))))
         } else {
-            Err(ParseError::new("Expected new expression parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected new expression parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 /// Generic call expression: identifier<T, U>(args)
@@ -5332,8 +5779,9 @@ fn rule_generic_call_expression(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("argument_list")),
         op(r, ")"),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [identifier, type_args, (, args?, )]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -5349,11 +5797,10 @@ fn rule_generic_call_expression(r: &RuleBuilder) -> Combinator {
             // Parse arguments
             let arguments: Vec<Argument> = match args_result {
                 ParseResult::None => vec![],
-                ParseResult::List(items) => {
-                    items.into_iter().filter_map(|a| {
-                        parse_result_to_argument(a).ok()
-                    }).collect()
-                }
+                ParseResult::List(items) => items
+                    .into_iter()
+                    .filter_map(|a| parse_result_to_argument(a).ok())
+                    .collect(),
                 other => {
                     if let Ok(arg) = parse_result_to_argument(other) {
                         vec![arg]
@@ -5366,18 +5813,23 @@ fn rule_generic_call_expression(r: &RuleBuilder) -> Combinator {
             // Convert callee identifier to expression
             let callee_expr = to_expr(callee)?;
 
-            Ok(ParseResult::Expr(Expression::Call(Box::new(CallExpression {
-                callee: Rc::new(callee_expr),
-                arguments,
-                type_arguments,
-                optional: false,
-                span,
-            }))))
+            Ok(ParseResult::Expr(Expression::Call(Box::new(
+                CallExpression {
+                    callee: Rc::new(callee_expr),
+                    arguments,
+                    type_arguments,
+                    optional: false,
+                    span,
+                },
+            ))))
         } else {
-            Err(ParseError::new("Expected generic call expression parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected generic call expression parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_yield_expression(r: &RuleBuilder) -> Combinator {
@@ -5386,8 +5838,9 @@ fn rule_yield_expression(r: &RuleBuilder) -> Combinator {
         r.optional(op(r, "*")),
         r.optional(r.parse("expression")),
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [yield, optional *, optional expression]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -5407,10 +5860,13 @@ fn rule_yield_expression(r: &RuleBuilder) -> Combinator {
                 span,
             })))
         } else {
-            Err(ParseError::new("Expected yield expression parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected yield expression parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_angle_bracket_assertion(r: &RuleBuilder) -> Combinator {
@@ -5422,8 +5878,9 @@ fn rule_angle_bracket_assertion(r: &RuleBuilder) -> Combinator {
         op(r, ">"),
         r.parse("primary"), // The expression being asserted
     ))
-    .ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [<, type, >, expr] - extract the expression, wrap in TypeAssertion
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -5433,24 +5890,27 @@ fn rule_angle_bracket_assertion(r: &RuleBuilder) -> Combinator {
             let expr = iter.next().unwrap_or(ParseResult::None);
             type_assertion(expr, span)
         } else {
-            Err(ParseError::new("Expected angle bracket assertion parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected angle bracket assertion parts".to_string(),
+                0,
+                0,
+            ))
         }
-    }),
-    )
+    }))
 }
 
 fn rule_parenthesized(r: &RuleBuilder) -> Combinator {
     r.sequence((op(r, "("), r.parse("expression"), op(r, ")")))
-        .ast(
-            quote!(|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        .ast(quote!(|result: ParseResult,
+                     _span: Span|
+         -> Result<ParseResult, ParseError> {
             // Extract expression from sequence [open_paren, expr, close_paren]
             if let ParseResult::List(mut items) = result {
                 Ok(items.remove(1))
             } else {
                 Ok(result)
             }
-        }),
-        )
+        }))
 }
 
 fn rule_argument_list(r: &RuleBuilder) -> Combinator {
@@ -5464,8 +5924,9 @@ fn rule_argument(r: &RuleBuilder) -> Combinator {
         r.parse("ws"),
         r.choice((r.parse("spread_element"), r.parse("assignment_expression"))),
     ))
-    .ast(
-        quote!(|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    .ast(quote!(|result: ParseResult,
+                       _span: Span|
+     -> Result<ParseResult, ParseError> {
         // Extract the inner result (skip the ws which produces None)
         match result {
             ParseResult::List(items) => {
@@ -5476,10 +5937,9 @@ fn rule_argument(r: &RuleBuilder) -> Combinator {
                 }
                 Ok(ParseResult::None)
             }
-            other => Ok(other)
+            other => Ok(other),
         }
-    }),
-    )
+    }))
 }
 
 // Parameters
@@ -5526,12 +5986,12 @@ fn rule_pattern(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_identifier_pattern(r: &RuleBuilder) -> Combinator {
-    r.parse("identifier").ast(
-        quote!(|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    r.parse("identifier").ast(quote!(|result: ParseResult,
+                                      _span: Span|
+     -> Result<ParseResult, ParseError> {
         let id = to_ident(result)?;
         Ok(ParseResult::Pat(Pattern::Identifier(id)))
-    }),
-    )
+    }))
 }
 
 fn rule_object_pattern(r: &RuleBuilder) -> Combinator {
@@ -5539,7 +5999,10 @@ fn rule_object_pattern(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.optional(r.separated_by_trailing(r.parse("object_pattern_property"), op(r, ","))),
         op(r, "}"),
-    )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [{, properties?, }]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -5549,87 +6012,112 @@ fn rule_object_pattern(r: &RuleBuilder) -> Combinator {
 
             let properties: Vec<ObjectPatternProperty> = match properties_result {
                 ParseResult::List(items) => {
-                    items.into_iter().filter_map(|item| {
-                        match item {
-                            ParseResult::Pat(Pattern::Rest(r)) => Some(ObjectPatternProperty::Rest(r)),
-                            ParseResult::List(prop_parts) => {
-                                // [key, colon_pattern?, default?]
-                                let mut prop_iter = prop_parts.into_iter();
-                                let key_result = prop_iter.next()?;
-                                let colon_pattern = prop_iter.next();
-                                let default_val = prop_iter.next();
+                    items
+                        .into_iter()
+                        .filter_map(|item| {
+                            match item {
+                                ParseResult::Pat(Pattern::Rest(r)) => {
+                                    Some(ObjectPatternProperty::Rest(r))
+                                }
+                                ParseResult::List(prop_parts) => {
+                                    // [key, colon_pattern?, default?]
+                                    let mut prop_iter = prop_parts.into_iter();
+                                    let key_result = prop_iter.next()?;
+                                    let colon_pattern = prop_iter.next();
+                                    let default_val = prop_iter.next();
 
-                                // Determine key and value
-                                let key = match &key_result {
-                                    ParseResult::Ident(id) => ObjectPropertyKey::Identifier(id.clone()),
-                                    ParseResult::Expr(Expression::Literal(lit)) => {
-                                        match &lit.value {
-                                            LiteralValue::String(s) => ObjectPropertyKey::String(StringLiteral {
-                                                value: s.clone(),
-                                                span: lit.span.clone(),
-                                            }),
-                                            LiteralValue::Number(_) => ObjectPropertyKey::Number(*lit.clone()),
-                                            _ => return None,
+                                    // Determine key and value
+                                    let key = match &key_result {
+                                        ParseResult::Ident(id) => {
+                                            ObjectPropertyKey::Identifier(id.clone())
                                         }
-                                    }
-                                    _ => return None,
-                                };
-
-                                // Check if shorthand (no : pattern)
-                                let (value, shorthand) = match colon_pattern {
-                                    Some(ParseResult::List(colon_parts)) => {
-                                        // [colon, pattern]
-                                        let pattern = colon_parts.into_iter().nth(1).and_then(|p| to_pattern(p).ok())?;
-                                        (pattern, false)
-                                    }
-                                    _ => {
-                                        // Shorthand: { x } means { x: x }
-                                        if let ParseResult::Ident(id) = key_result {
-                                            (Pattern::Identifier(id.clone()), true)
-                                        } else {
-                                            return None;
+                                        ParseResult::Expr(Expression::Literal(lit)) => {
+                                            match &lit.value {
+                                                LiteralValue::String(s) => {
+                                                    ObjectPropertyKey::String(StringLiteral {
+                                                        value: s.clone(),
+                                                        span: lit.span.clone(),
+                                                    })
+                                                }
+                                                LiteralValue::Number(_) => {
+                                                    ObjectPropertyKey::Number(*lit.clone())
+                                                }
+                                                _ => return None,
+                                            }
                                         }
-                                    }
-                                };
+                                        _ => return None,
+                                    };
 
-                                // If there's a default value, wrap pattern in Pattern::Assignment
-                                let value = if let Some(ParseResult::List(default_parts)) = default_val {
-                                    // default is [=, expression]
-                                    if let Some(expr_result) = default_parts.into_iter().nth(1) {
-                                        if let Ok(expr) = to_expr(expr_result) {
-                                            Pattern::Assignment(AssignmentPattern {
-                                                left: Box::new(value),
-                                                right: Rc::new(expr),
-                                                span: span.clone(),
-                                            })
+                                    // Check if shorthand (no : pattern)
+                                    let (value, shorthand) = match colon_pattern {
+                                        Some(ParseResult::List(colon_parts)) => {
+                                            // [colon, pattern]
+                                            let pattern = colon_parts
+                                                .into_iter()
+                                                .nth(1)
+                                                .and_then(|p| to_pattern(p).ok())?;
+                                            (pattern, false)
+                                        }
+                                        _ => {
+                                            // Shorthand: { x } means { x: x }
+                                            if let ParseResult::Ident(id) = key_result {
+                                                (Pattern::Identifier(id.clone()), true)
+                                            } else {
+                                                return None;
+                                            }
+                                        }
+                                    };
+
+                                    // If there's a default value, wrap pattern in Pattern::Assignment
+                                    let value = if let Some(ParseResult::List(default_parts)) =
+                                        default_val
+                                    {
+                                        // default is [=, expression]
+                                        if let Some(expr_result) = default_parts.into_iter().nth(1)
+                                        {
+                                            if let Ok(expr) = to_expr(expr_result) {
+                                                Pattern::Assignment(AssignmentPattern {
+                                                    left: Box::new(value),
+                                                    right: Rc::new(expr),
+                                                    span: span.clone(),
+                                                })
+                                            } else {
+                                                value
+                                            }
                                         } else {
                                             value
                                         }
                                     } else {
                                         value
-                                    }
-                                } else {
-                                    value
-                                };
+                                    };
 
-                                Some(ObjectPatternProperty::KeyValue {
-                                    key,
-                                    value,
-                                    shorthand,
-                                    span: span.clone(),
-                                })
+                                    Some(ObjectPatternProperty::KeyValue {
+                                        key,
+                                        value,
+                                        shorthand,
+                                        span: span.clone(),
+                                    })
+                                }
+                                _ => None,
                             }
-                            _ => None,
-                        }
-                    }).collect()
+                        })
+                        .collect()
                 }
                 ParseResult::None => vec![],
                 _ => vec![],
             };
 
-            Ok(ParseResult::Pat(Pattern::Object(ObjectPattern { properties, type_annotation: None, span })))
+            Ok(ParseResult::Pat(Pattern::Object(ObjectPattern {
+                properties,
+                type_annotation: None,
+                span,
+            })))
         } else {
-            Err(ParseError::new("Expected object pattern parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected object pattern parts".to_string(),
+                0,
+                0,
+            ))
         }
     }))
 }
@@ -5649,12 +6137,14 @@ fn rule_object_pattern_property(r: &RuleBuilder) -> Combinator {
 fn rule_array_pattern(r: &RuleBuilder) -> Combinator {
     r.sequence((
         op(r, "["),
-        r.optional(r.separated_by_trailing(
-            r.optional(r.parse("array_pattern_element")),
-            op(r, ","),
-        )),
+        r.optional(
+            r.separated_by_trailing(r.optional(r.parse("array_pattern_element")), op(r, ",")),
+        ),
         op(r, "]"),
-    )).ast(quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(quote!(|result: ParseResult,
+                       span: Span|
+     -> Result<ParseResult, ParseError> {
         // [[, elements?, ]]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -5664,44 +6154,57 @@ fn rule_array_pattern(r: &RuleBuilder) -> Combinator {
 
             let elements: Vec<Option<Pattern>> = match elements_result {
                 ParseResult::List(items) => {
-                    items.into_iter().map(|item| {
-                        match item {
-                            ParseResult::Pat(p) => Some(p),
-                            ParseResult::List(elem_parts) => {
-                                // [pattern, default?]
-                                let mut elem_iter = elem_parts.into_iter();
-                                let pattern_result = elem_iter.next();
-                                let default_result = elem_iter.next();
+                    items
+                        .into_iter()
+                        .map(|item| {
+                            match item {
+                                ParseResult::Pat(p) => Some(p),
+                                ParseResult::List(elem_parts) => {
+                                    // [pattern, default?]
+                                    let mut elem_iter = elem_parts.into_iter();
+                                    let pattern_result = elem_iter.next();
+                                    let default_result = elem_iter.next();
 
-                                let mut pattern = pattern_result.and_then(|p| to_pattern(p).ok())?;
+                                    let mut pattern =
+                                        pattern_result.and_then(|p| to_pattern(p).ok())?;
 
-                                // If there's a default value, wrap in Pattern::Assignment
-                                if let Some(ParseResult::List(default_parts)) = default_result {
-                                    // default_parts is [=, expression]
-                                    if let Some(expr_result) = default_parts.into_iter().nth(1) {
-                                        if let Ok(expr) = to_expr(expr_result) {
-                                            pattern = Pattern::Assignment(AssignmentPattern {
-                                                left: Box::new(pattern),
-                                                right: Rc::new(expr),
-                                                span: span.clone(),
-                                            });
+                                    // If there's a default value, wrap in Pattern::Assignment
+                                    if let Some(ParseResult::List(default_parts)) = default_result {
+                                        // default_parts is [=, expression]
+                                        if let Some(expr_result) = default_parts.into_iter().nth(1)
+                                        {
+                                            if let Ok(expr) = to_expr(expr_result) {
+                                                pattern = Pattern::Assignment(AssignmentPattern {
+                                                    left: Box::new(pattern),
+                                                    right: Rc::new(expr),
+                                                    span: span.clone(),
+                                                });
+                                            }
                                         }
                                     }
+                                    Some(pattern)
                                 }
-                                Some(pattern)
+                                ParseResult::None => None,
+                                _ => None,
                             }
-                            ParseResult::None => None,
-                            _ => None,
-                        }
-                    }).collect()
+                        })
+                        .collect()
                 }
                 ParseResult::None => vec![],
                 _ => vec![],
             };
 
-            Ok(ParseResult::Pat(Pattern::Array(ArrayPattern { elements, type_annotation: None, span })))
+            Ok(ParseResult::Pat(Pattern::Array(ArrayPattern {
+                elements,
+                type_annotation: None,
+                span,
+            })))
         } else {
-            Err(ParseError::new("Expected array pattern parts".to_string(), 0, 0))
+            Err(ParseError::new(
+                "Expected array pattern parts".to_string(),
+                0,
+                0,
+            ))
         }
     }))
 }
@@ -5715,25 +6218,30 @@ fn rule_array_pattern_element(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_rest_pattern(r: &RuleBuilder) -> Combinator {
-    r.sequence((op(r, "..."), r.parse("pattern"))).ast(
-        quote!(|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
-        // [..., pattern]
-        if let ParseResult::List(parts) = result {
-            let mut iter = parts.into_iter();
-            let _spread = iter.next();
-            let pattern = iter.next().unwrap_or(ParseResult::None);
+    r.sequence((op(r, "..."), r.parse("pattern")))
+        .ast(quote!(|result: ParseResult,
+                     span: Span|
+         -> Result<ParseResult, ParseError> {
+            // [..., pattern]
+            if let ParseResult::List(parts) = result {
+                let mut iter = parts.into_iter();
+                let _spread = iter.next();
+                let pattern = iter.next().unwrap_or(ParseResult::None);
 
-            let inner = to_pattern(pattern)?;
-            Ok(ParseResult::Pat(Pattern::Rest(RestElement {
-                argument: Box::new(inner),
-                type_annotation: None,
-                span,
-            })))
-        } else {
-            Err(ParseError::new("Expected rest pattern parts".to_string(), 0, 0))
-        }
-    }),
-    )
+                let inner = to_pattern(pattern)?;
+                Ok(ParseResult::Pat(Pattern::Rest(RestElement {
+                    argument: Box::new(inner),
+                    type_annotation: None,
+                    span,
+                })))
+            } else {
+                Err(ParseError::new(
+                    "Expected rest pattern parts".to_string(),
+                    0,
+                    0,
+                ))
+            }
+        }))
 }
 
 // Type Annotations

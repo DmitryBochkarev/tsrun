@@ -153,9 +153,17 @@ pub enum PendingCompletion {
     /// Rethrow this exception after finally completes
     Throw(Guarded),
     /// Break to target after finally completes
-    Break { target: usize, try_depth: u8, scope_depth: u32 },
+    Break {
+        target: usize,
+        try_depth: u8,
+        scope_depth: u32,
+    },
     /// Continue to target after finally completes
-    Continue { target: usize, try_depth: u8, scope_depth: u32 },
+    Continue {
+        target: usize,
+        try_depth: u8,
+        scope_depth: u32,
+    },
 }
 
 /// A saved trampoline frame for suspension (Clone-able version without Guard)
@@ -2868,9 +2876,17 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
-            Op::Break { target, try_depth, scope_depth } => self.execute_break(target as usize, try_depth, scope_depth, interp),
+            Op::Break {
+                target,
+                try_depth,
+                scope_depth,
+            } => self.execute_break(target as usize, try_depth, scope_depth, interp),
 
-            Op::Continue { target, try_depth, scope_depth } => self.execute_continue(target as usize, try_depth, scope_depth, interp),
+            Op::Continue {
+                target,
+                try_depth,
+                scope_depth,
+            } => self.execute_continue(target as usize, try_depth, scope_depth, interp),
 
             // ═══════════════════════════════════════════════════════════════════════════
             // Variable Access
@@ -3756,11 +3772,19 @@ impl BytecodeVM {
                             // Re-throw the exception after finally
                             return Err(JsError::ThrownValue { guarded });
                         }
-                        PendingCompletion::Break { target, try_depth, scope_depth } => {
+                        PendingCompletion::Break {
+                            target,
+                            try_depth,
+                            scope_depth,
+                        } => {
                             // Continue with the break (recursively handles nested finally blocks)
                             return self.execute_break(target, try_depth, scope_depth, interp);
                         }
-                        PendingCompletion::Continue { target, try_depth, scope_depth } => {
+                        PendingCompletion::Continue {
+                            target,
+                            try_depth,
+                            scope_depth,
+                        } => {
                             // Continue with the continue (recursively handles nested finally blocks)
                             return self.execute_continue(target, try_depth, scope_depth, interp);
                         }
@@ -6519,7 +6543,13 @@ impl BytecodeVM {
 
     /// Execute a break, running any pending finally blocks first.
     /// scope_depth is the saved_env_stack depth to unwind to at the target.
-    fn execute_break(&mut self, target: usize, try_depth: u8, scope_depth: u32, interp: &mut Interpreter) -> Result<OpResult, JsError> {
+    fn execute_break(
+        &mut self,
+        target: usize,
+        try_depth: u8,
+        scope_depth: u32,
+        interp: &mut Interpreter,
+    ) -> Result<OpResult, JsError> {
         // Check if there's a try handler with a finally block between us and the target
         let target_try_depth = try_depth as usize;
 
@@ -6540,7 +6570,11 @@ impl BytecodeVM {
                 .ok_or_else(|| JsError::internal_error("Missing try handler"))?;
 
             // Save the pending break (scope_depth preserved for after finally)
-            self.pending_completion = Some(PendingCompletion::Break { target, try_depth, scope_depth });
+            self.pending_completion = Some(PendingCompletion::Break {
+                target,
+                try_depth,
+                scope_depth,
+            });
 
             // Pop the try handler (we're exiting this try block)
             self.try_stack.truncate(handler_idx);
@@ -6567,7 +6601,13 @@ impl BytecodeVM {
 
     /// Execute a continue, running any pending finally blocks first.
     /// scope_depth is the saved_env_stack depth to unwind to at the target.
-    fn execute_continue(&mut self, target: usize, try_depth: u8, scope_depth: u32, interp: &mut Interpreter) -> Result<OpResult, JsError> {
+    fn execute_continue(
+        &mut self,
+        target: usize,
+        try_depth: u8,
+        scope_depth: u32,
+        interp: &mut Interpreter,
+    ) -> Result<OpResult, JsError> {
         // Check if there's a try handler with a finally block between us and the target
         let target_try_depth = try_depth as usize;
 
@@ -6588,7 +6628,11 @@ impl BytecodeVM {
                 .ok_or_else(|| JsError::internal_error("Missing try handler"))?;
 
             // Save the pending continue (scope_depth preserved for after finally)
-            self.pending_completion = Some(PendingCompletion::Continue { target, try_depth, scope_depth });
+            self.pending_completion = Some(PendingCompletion::Continue {
+                target,
+                try_depth,
+                scope_depth,
+            });
 
             // Pop the try handler (we're exiting this try block)
             self.try_stack.truncate(handler_idx);
