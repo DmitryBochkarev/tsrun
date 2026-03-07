@@ -277,7 +277,7 @@ pub extern "C" fn tsrun_string_len(
         return ptr::null_mut();
     }
 
-    let bytes = unsafe { core::slice::from_raw_parts(s, len) };
+    let bytes = unsafe { core::slice::from_raw_parts(s.cast::<u8>(), len) };
     let s_str = match core::str::from_utf8(bytes) {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
