@@ -2,12 +2,17 @@ pre-commit:
   piped: true
   commands:
     fmt:
+      priority: 1
       run: cargo fmt --all -- --check
     clippy:
+      priority: 2
       run: cargo clippy --all-targets --all-features -- -D warnings
     build:
+      priority: 3
       run: cargo build --verbose
     test:
+      priority: 4
       run: timeout 120 cargo test --verbose
     build-c-api:
+      priority: 5
       run: cargo build --features c-api
