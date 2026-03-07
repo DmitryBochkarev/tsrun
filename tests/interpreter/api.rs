@@ -2728,7 +2728,7 @@ fn test_get_bool() {
     let guard = api::create_guard(&interp);
     let obj = api::create_object(&mut interp, &guard).unwrap();
     api::set_property(&obj, "active", JsValue::from(true)).unwrap();
-    assert_eq!(api::get_bool(&obj, "active").unwrap(), true);
+    assert!(api::get_bool(&obj, "active").unwrap());
     assert!(api::get_bool(&obj, "missing").is_err());
     api::set_property(&obj, "count", JsValue::from(1)).unwrap();
     assert!(api::get_bool(&obj, "count").is_err());
