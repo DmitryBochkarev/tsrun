@@ -139,7 +139,7 @@ impl Compiler {
         self.builder.set_span(block.span);
 
         // Push a new scope
-        self.builder.emit(Op::PushScope);
+        self.emit_push_scope();
 
         if block.body.is_empty() && self.track_completion {
             // Empty block has completion value undefined
@@ -152,7 +152,7 @@ impl Compiler {
         }
 
         // Pop scope
-        self.builder.emit(Op::PopScope);
+        self.emit_pop_scope();
 
         Ok(())
     }
@@ -324,7 +324,7 @@ impl Compiler {
     /// Compile for loop without per-iteration bindings (var or expression init)
     fn compile_for_simple(&mut self, for_stmt: &ForStatement) -> Result<(), JsError> {
         // Push scope for loop variable
-        self.builder.emit(Op::PushScope);
+        self.emit_push_scope();
 
         // Compile init
         if let Some(init) = &for_stmt.init {
@@ -383,7 +383,7 @@ impl Compiler {
         self.pop_loop();
 
         // Pop scope
-        self.builder.emit(Op::PopScope);
+        self.emit_pop_scope();
 
         Ok(())
     }
@@ -408,7 +408,7 @@ impl Compiler {
         }
 
         // Push outer scope for the init
-        self.builder.emit(Op::PushScope);
+        self.emit_push_scope();
 
         // Compile init (first iteration's values)
         if let Some(ForInit::Variable(decl)) = &for_stmt.init {
@@ -425,13 +425,13 @@ impl Compiler {
         }
 
         // Pop the init scope (we'll create per-iteration scopes in the loop)
-        self.builder.emit(Op::PopScope);
+        self.emit_pop_scope();
 
         // Loop start - push per-iteration scope and copy values from registers
         let loop_start = self.builder.current_offset();
 
         // Push per-iteration scope
-        self.builder.emit(Op::PushScope);
+        self.emit_push_scope();
 
         // Declare and initialize vars from registers (these are the values closures will capture)
         for (name, reg) in &var_regs {
@@ -491,7 +491,7 @@ impl Compiler {
         }
 
         // Pop per-iteration scope
-        self.builder.emit(Op::PopScope);
+        self.emit_pop_scope();
 
         // Jump back to loop start
         self.builder.emit_jump_to(loop_start);
@@ -502,7 +502,7 @@ impl Compiler {
         }
 
         // If jumping out due to test failure, need to pop scope
-        self.builder.emit(Op::PopScope);
+        self.emit_pop_scope();
 
         // Pop loop context
         self.pop_loop();
@@ -520,7 +520,7 @@ impl Compiler {
         self.builder.set_span(for_in.span);
 
         // Push scope
-        self.builder.emit(Op::PushScope);
+        self.emit_push_scope();
 
         // Compile the right side (object to iterate)
         let obj_reg = self.builder.alloc_register()?;
@@ -585,7 +585,7 @@ impl Compiler {
         self.builder.free_register(obj_reg);
 
         // Pop scope
-        self.builder.emit(Op::PopScope);
+        self.emit_pop_scope();
 
         Ok(())
     }
@@ -595,7 +595,7 @@ impl Compiler {
         self.builder.set_span(for_of.span);
 
         // Push scope
-        self.builder.emit(Op::PushScope);
+        self.emit_push_scope();
 
         // Compile the right side (iterable)
         let obj_reg = self.builder.alloc_register()?;
@@ -707,7 +707,7 @@ impl Compiler {
         self.builder.free_register(obj_reg);
 
         // Pop scope
-        self.builder.emit(Op::PopScope);
+        self.emit_pop_scope();
 
         Ok(())
     }
@@ -947,7 +947,7 @@ impl Compiler {
             self.builder.set_span(handler.span);
 
             // Push scope for catch variable
-            self.builder.emit(Op::PushScope);
+            self.emit_push_scope();
 
             // Bind exception to parameter
             if let Some(param) = &handler.param {
@@ -968,7 +968,7 @@ impl Compiler {
             }
 
             // Pop scope
-            self.builder.emit(Op::PopScope);
+            self.emit_pop_scope();
         }
 
         // Jump to finally (if exists) or end
@@ -2856,7 +2856,7 @@ impl Compiler {
         self.builder.free_register(existing_reg);
 
         // Push a new scope for the namespace body
-        self.builder.emit(Op::PushScope);
+        self.emit_push_scope();
 
         // Compile the namespace body statements
         for stmt in decl.body.iter() {
@@ -2872,7 +2872,7 @@ impl Compiler {
         }
 
         // Pop the namespace scope
-        self.builder.emit(Op::PopScope);
+        self.emit_pop_scope();
 
         self.builder.free_register(ns_obj);
         Ok(())

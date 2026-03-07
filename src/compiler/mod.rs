@@ -34,6 +34,10 @@ pub struct Compiler {
     /// Try block depth (for determining if we're in a try block)
     try_depth: usize,
 
+    /// Current scope depth (number of PushScope ops without matching PopScope)
+    /// Used to emit PopScope when break/continue jumps across scopes
+    scope_depth: usize,
+
     /// Set of variables that have been hoisted in the current scope
     /// Used to determine if we should emit DeclareVarHoisted or SetVar
     hoisted_vars: FxHashSet<JsString>,
@@ -101,6 +105,11 @@ struct LoopContext {
     continue_jumps: Vec<JumpPlaceholder>,
     /// Try depth when this loop started (for finally handling)
     try_depth: usize,
+    /// Scope depth when this loop started (for unwinding scopes on break)
+    scope_depth: usize,
+    /// Scope depth at the continue target (may differ from scope_depth for labeled loops)
+    /// This is set when the continue target is propagated from the actual loop.
+    continue_scope_depth: usize,
     /// Iterator register for for-of loops (for iterator close protocol)
     /// When set, break/return/throw should call iterator.return()
     iterator_reg: Option<Register>,
@@ -114,6 +123,7 @@ impl Compiler {
             loop_stack: Vec::new(),
             labels: FxHashMap::default(),
             try_depth: 0,
+            scope_depth: 0,
             hoisted_vars: FxHashSet::default(),
             loop_var_redirects: FxHashMap::default(),
             class_context_stack: Vec::new(),
@@ -251,6 +261,18 @@ impl Compiler {
         self.builder.registers()
     }
 
+    /// Emit PushScope and track depth
+    fn emit_push_scope(&mut self) {
+        self.builder.emit(Op::PushScope);
+        self.scope_depth += 1;
+    }
+
+    /// Emit PopScope and track depth
+    fn emit_pop_scope(&mut self) {
+        self.builder.emit(Op::PopScope);
+        self.scope_depth = self.scope_depth.saturating_sub(1);
+    }
+
     /// Push a loop context
     fn push_loop(&mut self, label: Option<JsString>) {
         self.push_loop_with_iterator(label, None);
@@ -268,6 +290,8 @@ impl Compiler {
             continue_target: None,
             continue_jumps: Vec::new(),
             try_depth: self.try_depth,
+            scope_depth: self.scope_depth,
+            continue_scope_depth: self.scope_depth,
             iterator_reg,
         });
     }
@@ -287,6 +311,7 @@ impl Compiler {
 
         // Start from the current (innermost) context and work backwards
         // Set continue target for the current loop
+        let current_continue_scope_depth = self.loop_stack.get(len - 1).map(|ctx| ctx.continue_scope_depth).unwrap_or(0);
         if let Some(ctx) = self.loop_stack.get_mut(len - 1) {
             ctx.continue_target = Some(target);
             all_pending_jumps.append(&mut ctx.continue_jumps);
@@ -294,11 +319,13 @@ impl Compiler {
 
         // Propagate to parent labeled contexts that don't have a continue target yet
         // A labeled context directly wrapping a loop shares the loop's continue target
+        // and continue_scope_depth (since the continue will jump into the loop's scope)
         for i in (0..len - 1).rev() {
             if let Some(ctx) = self.loop_stack.get_mut(i) {
                 // Only propagate if this is a labeled context and it doesn't have a continue target
                 if ctx.label.is_some() && ctx.continue_target.is_none() {
                     ctx.continue_target = Some(target);
+                    ctx.continue_scope_depth = current_continue_scope_depth;
                     all_pending_jumps.append(&mut ctx.continue_jumps);
                 } else {
                     // Stop propagating if we hit a context that's not a label wrapper
@@ -307,9 +334,10 @@ impl Compiler {
             }
         }
 
-        // Patch all pending continue jumps
-        for jump in all_pending_jumps {
-            self.builder.patch_jump_to(jump, target as JumpTarget);
+        // Patch all pending continue jumps (both target address and scope_depth)
+        for jump in &all_pending_jumps {
+            self.builder.patch_jump_to(*jump, target as JumpTarget);
+            self.builder.patch_scope_depth(*jump, current_continue_scope_depth as u32);
         }
     }
 
@@ -374,10 +402,18 @@ impl Compiler {
             }
         }
 
-        // Emit Break opcode with placeholder target
+        // Get the target loop's scope depth for unwinding at runtime
+        let target_scope_depth = self
+            .loop_stack
+            .get(loop_idx)
+            .map(|ctx| ctx.scope_depth)
+            .unwrap_or(0);
+
+        // Emit Break opcode with placeholder target and scope_depth for runtime unwinding
         let idx = self.builder.emit(Op::Break {
             target: 0,
             try_depth: target_try_depth,
+            scope_depth: target_scope_depth as u32,
         });
         let jump = JumpPlaceholder {
             instruction_index: idx,
@@ -415,16 +451,20 @@ impl Compiler {
 
         if let Some(ctx) = self.loop_stack.get_mut(loop_idx) {
             if let Some(target) = ctx.continue_target {
-                // Target is known, emit Continue with known target
+                // Target is known - use continue_scope_depth for unwinding
                 self.builder.emit(Op::Continue {
                     target: target as u32,
                     try_depth: target_try_depth,
+                    scope_depth: ctx.continue_scope_depth as u32,
                 });
             } else {
-                // Target not yet known, save placeholder
+                // Target not yet known - emit placeholder with current scope_depth.
+                // The scope_depth will be patched when set_continue_target is called,
+                // along with the target address.
                 let idx = self.builder.emit(Op::Continue {
                     target: 0,
                     try_depth: target_try_depth,
+                    scope_depth: 0, // placeholder, patched later
                 });
                 let jump = JumpPlaceholder {
                     instruction_index: idx,

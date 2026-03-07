@@ -434,6 +434,17 @@ impl BytecodeBuilder {
         }
     }
 
+    /// Patch the scope_depth field of a Continue or Break instruction
+    pub fn patch_scope_depth(&mut self, placeholder: JumpPlaceholder, depth: u32) {
+        if let Some(op) = self.code.get_mut(placeholder.instruction_index) {
+            match op {
+                Op::Continue { scope_depth, .. } => *scope_depth = depth,
+                Op::Break { scope_depth, .. } => *scope_depth = depth,
+                _ => {}
+            }
+        }
+    }
+
     /// Patch PushTry instruction with catch and finally targets
     pub fn patch_try_targets(
         &mut self,

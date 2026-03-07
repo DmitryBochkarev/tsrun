@@ -584,31 +584,21 @@ impl<T: Default + Reset + Traceable> Space<T> {
 
         // Collect roots from all active guards.
         // Clean up dead Weak refs as we go.
-        let mut total_roots = 0;
-        let mut alive_guards = 0;
-        let mut dead_guards = 0;
-        let mut guards_with_roots: Vec<usize> = Vec::new();
         self.active_guards.retain(|weak| {
             if let Some(inner) = weak.upgrade() {
                 // Guard is alive - add its roots to the mark stack
                 let roots = inner.roots.borrow();
-                alive_guards += 1;
-                guards_with_roots.push(roots.len());
                 for &ptr in roots.iter() {
                     let gc_box = unsafe { ptr.as_ref() };
                     if !gc_box.pooled.get() {
                         stack.push(ptr);
-                        total_roots += 1;
                     }
                 }
                 true // Keep this Weak ref
             } else {
-                dead_guards += 1;
                 false // Guard was dropped, remove from list
             }
         });
-        let _ = (total_roots, alive_guards, dead_guards, guards_with_roots); // suppress unused warnings
-
         // Get raw pointer to marked_chunks for use in closure (avoids borrow issues)
         let marked_chunks_ptr = self.marked_chunks.as_mut_ptr();
         let marked_chunks_len = self.marked_chunks.len();

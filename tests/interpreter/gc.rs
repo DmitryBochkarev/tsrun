@@ -1,7 +1,7 @@
 //! Tests for garbage collection of JavaScript objects
 
 use super::run;
-use tsrun::{GcStats, Interpreter, JsString, JsValue, RuntimeValue, StepResult};
+use tsrun::{api, GcStats, Interpreter, JsString, JsValue, RuntimeValue, StepResult};
 
 /// Get baseline object count (builtins only, no user code)
 fn get_baseline_live_count() -> usize {
@@ -1608,5 +1608,909 @@ fn test_type_sizes() {
     assert!(
         size_of::<PropertyStorage>() <= 400,
         "PropertyStorage too large"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// auto_asteroids GC leak diagnosis tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Reproduces the auto_asteroids set_sonar pattern:
+/// Each iteration creates objects under a temp guard, attaches them
+/// to a long-lived guarded object, and drops the temp guard.
+/// Old objects should be collected by GC.
+#[test]
+fn test_sonar_replacement_pattern() {
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(100);
+
+    let root_guard = api::create_guard(&interp);
+    let parent =
+        api::create_from_json(&mut interp, &root_guard, &serde_json::json!({"data": []})).unwrap();
+
+    interp.collect();
+    let baseline = interp.gc_stats().live_objects;
+    println!("Baseline live objects: {}", baseline);
+
+    for frame in 0..100 {
+        let temp_guard = api::create_guard(&interp);
+        let array = api::create_array(&mut interp, &temp_guard).unwrap();
+
+        for _ in 0..25 {
+            let pos = api::create_object_with_capacity(&mut interp, &temp_guard, 2).unwrap();
+            api::set_property(&pos, "x", JsValue::from(1.0)).unwrap();
+            api::set_property(&pos, "y", JsValue::from(2.0)).unwrap();
+
+            let vel = api::create_object_with_capacity(&mut interp, &temp_guard, 2).unwrap();
+            api::set_property(&vel, "x", JsValue::from(0.1)).unwrap();
+            api::set_property(&vel, "y", JsValue::from(0.2)).unwrap();
+
+            let entry = api::create_object_with_capacity(&mut interp, &temp_guard, 4).unwrap();
+            api::set_property(&entry, "position", pos).unwrap();
+            api::set_property(&entry, "velocity", vel).unwrap();
+            api::set_property(&entry, "distance", JsValue::from(100.0)).unwrap();
+            api::set_property(&entry, "radius", JsValue::from(20.0)).unwrap();
+
+            api::push(&array, entry).unwrap();
+        }
+
+        api::set_property(&parent, "data", array).unwrap();
+
+        if frame % 20 == 19 {
+            interp.collect();
+            let stats = interp.gc_stats();
+            println!(
+                "Frame {}: total={}, pooled={}, live={}",
+                frame, stats.total_objects, stats.pooled_objects, stats.live_objects
+            );
+        }
+    }
+
+    interp.collect();
+    let final_stats = interp.gc_stats();
+    println!(
+        "Final: total={}, pooled={}, live={}",
+        final_stats.total_objects, final_stats.pooled_objects, final_stats.live_objects
+    );
+
+    let overhead = final_stats.live_objects.saturating_sub(baseline);
+    assert!(
+        overhead < 150,
+        "Sonar replacement leaked: {} objects over baseline (expected < 150, got {})",
+        overhead,
+        final_stats.live_objects,
+    );
+}
+
+/// Tests that repeated function calls with inner closures don't leak
+/// scope objects, closure objects, or temporary values.
+#[test]
+fn test_function_call_scope_cleanup() {
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(100);
+
+    let source = r#"
+        export function update(input) {
+            const items = input.items;
+            function helper(a, b) {
+                return { x: a.x - b.x, y: a.y - b.y };
+            }
+            function process(item) {
+                const d = helper(item, { x: 0, y: 0 });
+                return d.x + d.y;
+            }
+            let total = 0;
+            for (const item of items) {
+                total += process(item);
+            }
+            return total;
+        }
+    "#;
+
+    interp
+        .prepare(source, Some(tsrun::ModulePath::new("test.ts")))
+        .unwrap();
+    interp.run_to_completion().unwrap();
+    let update_fn = api::get_export(&interp, "update").unwrap();
+
+    interp.collect();
+    let baseline = interp.gc_stats().live_objects;
+    println!("Baseline live objects: {}", baseline);
+
+    for frame in 0..100 {
+        let call_guard = api::create_guard(&interp);
+
+        let input = api::create_from_json(
+            &mut interp,
+            &call_guard,
+            &serde_json::json!({
+                "items": [
+                    {"x": 1.0, "y": 2.0},
+                    {"x": 3.0, "y": 4.0},
+                    {"x": 5.0, "y": 6.0},
+                    {"x": 7.0, "y": 8.0},
+                    {"x": 9.0, "y": 10.0},
+                ]
+            }),
+        )
+        .unwrap();
+
+        let _result =
+            api::call_function(&mut interp, &call_guard, &update_fn, None, &[input]).unwrap();
+
+        if frame % 20 == 19 {
+            interp.collect();
+            let stats = interp.gc_stats();
+            println!(
+                "Frame {}: total={}, pooled={}, live={}",
+                frame, stats.total_objects, stats.pooled_objects, stats.live_objects
+            );
+        }
+    }
+
+    interp.collect();
+    let final_stats = interp.gc_stats();
+    println!(
+        "Final: total={}, pooled={}, live={}",
+        final_stats.total_objects, final_stats.pooled_objects, final_stats.live_objects
+    );
+
+    let overhead = final_stats.live_objects.saturating_sub(baseline);
+    assert!(
+        overhead < 100,
+        "Function call leaked: {} objects over baseline (expected < 100, got {})",
+        overhead,
+        final_stats.live_objects,
+    );
+}
+
+/// Tests that objects created via guard.alloc() (which inflates ref_count +1)
+/// are still collected by mark-and-sweep when unreachable.
+#[test]
+fn test_guard_alloc_refcount_collection() {
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(50);
+
+    let root_guard = api::create_guard(&interp);
+    let root = api::create_object_with_capacity(&mut interp, &root_guard, 1).unwrap();
+
+    interp.collect();
+    let baseline = interp.gc_stats().live_objects;
+    println!("Baseline: {}", baseline);
+
+    for i in 0..100 {
+        let temp_guard = api::create_guard(&interp);
+        let obj = api::create_object_with_capacity(&mut interp, &temp_guard, 2).unwrap();
+        api::set_property(&obj, "value", JsValue::from(i as f64)).unwrap();
+
+        api::set_property(&root, "child", obj).unwrap();
+    }
+
+    interp.collect();
+    let final_stats = interp.gc_stats();
+    println!(
+        "Final: total={}, pooled={}, live={}",
+        final_stats.total_objects, final_stats.pooled_objects, final_stats.live_objects
+    );
+
+    let overhead = final_stats.live_objects.saturating_sub(baseline);
+    assert!(
+        overhead < 10,
+        "Ref_count inflation leaked: {} objects over baseline",
+        overhead,
+    );
+}
+
+/// Full reproduction of the auto_asteroids game loop pattern:
+/// - Build sonar data via Rust API under temp guard
+/// - Set sonar on cached events object
+/// - Reset output arrays (set length = 0)
+/// - Call JS firmware function
+/// - Transfer memory between output and input
+#[test]
+fn test_auto_asteroids_combined_pattern() {
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(100);
+
+    let source = r#"
+        export function update(input, output) {
+            const { sonar } = input.events;
+            const commands = output.commands;
+            const draw = output.draw;
+            const mem = input.memory || {};
+
+            function wrappedDelta(from, to) {
+                let dx = to.x - from.x;
+                let dy = to.y - from.y;
+                return { x: dx, y: dy };
+            }
+
+            for (const ast of sonar) {
+                const d = wrappedDelta(input.properties.position, ast.position);
+                commands.push({ type: "aim", angle: Math.atan2(d.y, d.x) });
+                draw.push({ type: "circle", x: ast.position.x, y: ast.position.y, radius: 5 });
+            }
+
+            output.memory = mem;
+        }
+    "#;
+
+    interp
+        .prepare(source, Some(tsrun::ModulePath::new("firmware.ts")))
+        .unwrap();
+    interp.run_to_completion().unwrap();
+    let update_fn = api::get_export(&interp, "update").unwrap();
+
+    let root_guard = api::create_guard(&interp);
+    let input = api::create_from_json(
+        &mut interp,
+        &root_guard,
+        &serde_json::json!({
+            "globals": {"time": 0.0},
+            "properties": {
+                "position": {"x": 400.0, "y": 400.0},
+                "velocity": {"x": 0.0, "y": 0.0},
+                "rotation": 0.0,
+                "radius": 20.0,
+            },
+            "ammo": {"bullets_available": 1},
+            "events": {"sonar": []},
+            "memory": null,
+        }),
+    )
+    .unwrap();
+
+    let output = api::create_from_json(
+        &mut interp,
+        &root_guard,
+        &serde_json::json!({
+            "commands": [],
+            "draw": [],
+            "memory": null,
+        }),
+    )
+    .unwrap();
+
+    let events = api::get_property(&input, "events").unwrap();
+    let commands = api::get_property(&output, "commands").unwrap();
+    let draw = api::get_property(&output, "draw").unwrap();
+
+    interp.collect();
+    let baseline = interp.gc_stats().live_objects;
+    println!("Baseline live objects: {}", baseline);
+
+    let mut stats_history: Vec<usize> = Vec::new();
+
+    for frame in 0..100 {
+        // --- set_sonar pattern ---
+        let temp_guard = api::create_guard(&interp);
+        let sonar = api::create_array(&mut interp, &temp_guard).unwrap();
+        for i in 0..25 {
+            let pos = api::create_object_with_capacity(&mut interp, &temp_guard, 2).unwrap();
+            api::set_property(&pos, "x", JsValue::from(100.0 + i as f64)).unwrap();
+            api::set_property(&pos, "y", JsValue::from(200.0 + i as f64)).unwrap();
+
+            let vel = api::create_object_with_capacity(&mut interp, &temp_guard, 2).unwrap();
+            api::set_property(&vel, "x", JsValue::from(0.1)).unwrap();
+            api::set_property(&vel, "y", JsValue::from(-0.1)).unwrap();
+
+            let entry = api::create_object_with_capacity(&mut interp, &temp_guard, 4).unwrap();
+            api::set_property(&entry, "position", pos).unwrap();
+            api::set_property(&entry, "velocity", vel).unwrap();
+            api::set_property(&entry, "distance", JsValue::from(150.0)).unwrap();
+            api::set_property(&entry, "radius", JsValue::from(25.0)).unwrap();
+
+            api::push(&sonar, entry).unwrap();
+        }
+        api::set_property(&events, "sonar", sonar).unwrap();
+        drop(temp_guard);
+
+        // --- reset_output pattern ---
+        api::set_property(&commands, "length", JsValue::from(0)).unwrap();
+        api::set_property(&draw, "length", JsValue::from(0)).unwrap();
+
+        // --- set_memory pattern ---
+        let memory = api::get_property(&output, "memory").unwrap();
+        api::set_property(&input, "memory", memory).unwrap();
+
+        // --- call_update pattern ---
+        let call_guard = api::create_guard(&interp);
+        let _result = api::call_function(
+            &mut interp,
+            &call_guard,
+            &update_fn,
+            None,
+            &[input.clone(), output.clone()],
+        )
+        .unwrap();
+
+        if frame % 10 == 9 {
+            interp.collect();
+            let stats = interp.gc_stats();
+            stats_history.push(stats.live_objects);
+            println!(
+                "Frame {}: total={}, pooled={}, live={}",
+                frame, stats.total_objects, stats.pooled_objects, stats.live_objects
+            );
+        }
+    }
+
+    interp.collect();
+    let final_stats = interp.gc_stats();
+    println!(
+        "Final: total={}, pooled={}, live={}",
+        final_stats.total_objects, final_stats.pooled_objects, final_stats.live_objects
+    );
+
+    let overhead = final_stats.live_objects.saturating_sub(baseline);
+    assert!(
+        overhead < 300,
+        "Combined pattern leaked: {} objects over baseline. History: {:?}",
+        overhead,
+        stats_history,
+    );
+
+    if stats_history.len() >= 2 {
+        let first = stats_history[0];
+        let last = stats_history[stats_history.len() - 1];
+        let growth = last.saturating_sub(first);
+        assert!(
+            growth < 100,
+            "Live objects growing over time: first={}, last={}, growth={}. History: {:?}",
+            first,
+            last,
+            growth,
+            stats_history,
+        );
+    }
+}
+
+/// Full reproduction using the ACTUAL auto_asteroids firmware code.
+#[test]
+fn test_real_firmware_gc_leak() {
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(100);
+
+    let source = r##"
+    export function update(input, output) {
+        const { time, screen_width, screen_height, bullet_speed, max_rotation } = input.globals;
+        const { position, velocity, rotation, radius: playerRadius } = input.properties;
+        const { bullets_available, reload_time_remaining } = input.ammo;
+        const { sonar } = input.events;
+        const mem = input.memory || {};
+        const commands = output.commands;
+        const draw = output.draw;
+        const currentSpeed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+        const PATROL_SPEED = 0.05;
+        const ATTACK_THRUST_MIN_DIST = 400;
+        const ATTACK_MAX_SPEED = 0.10;
+        if (sonar.length === 0) { output.memory = mem; return; }
+        function wrappedDelta(from, to) {
+            let dx = to.x - from.x; let dy = to.y - from.y;
+            if (dx > screen_width / 2) dx -= screen_width;
+            if (dx < -screen_width / 2) dx += screen_width;
+            if (dy > screen_height / 2) dy -= screen_height;
+            if (dy < -screen_height / 2) dy += screen_height;
+            return { x: dx, y: dy };
+        }
+        function interceptTime(ast) {
+            const d = wrappedDelta(position, ast.position);
+            const vr = { x: ast.velocity.x - velocity.x, y: ast.velocity.y - velocity.y };
+            const a = vr.x * vr.x + vr.y * vr.y - bullet_speed * bullet_speed;
+            const b = 2 * (d.x * vr.x + d.y * vr.y);
+            const c = d.x * d.x + d.y * d.y;
+            const disc = b * b - 4 * a * c;
+            if (disc < 0) return -1;
+            const sq = Math.sqrt(disc);
+            if (Math.abs(a) < 1e-6) { const t = -c / b; return t > 0 ? t : -1; }
+            const t1 = (-b - sq) / (2 * a); const t2 = (-b + sq) / (2 * a);
+            if (t1 > 0 && t2 > 0) return Math.min(t1, t2);
+            if (t1 > 0) return t1; if (t2 > 0) return t2; return -1;
+        }
+        function normalizeAngle(a) {
+            while (a > Math.PI) a -= 2 * Math.PI;
+            while (a < -Math.PI) a += 2 * Math.PI;
+            return a;
+        }
+        function bestBrakeAction() {
+            if (currentSpeed < 0.01) return null;
+            const thrustDotVel = Math.cos(rotation) * velocity.x + Math.sin(rotation) * velocity.y;
+            if (thrustDotVel > 0) return "reverse_thrust";
+            if (thrustDotVel < 0) return "thrust";
+            return null;
+        }
+        let bestTarget = null; let bestTime = Infinity; let bestAngle = 0;
+        for (const ast of sonar) {
+            const t = interceptTime(ast);
+            if (t > 0 && t < bestTime) {
+                bestTime = t; bestTarget = ast;
+                const d = wrappedDelta(position, ast.position);
+                bestAngle = Math.atan2(d.y + ast.velocity.y * t, d.x + ast.velocity.x * t);
+            }
+        }
+        if (!bestTarget) {
+            let nearestDist = Infinity;
+            for (const ast of sonar) {
+                if (ast.distance < nearestDist) {
+                    nearestDist = ast.distance; bestTarget = ast;
+                    const d = wrappedDelta(position, ast.position);
+                    bestAngle = Math.atan2(d.y, d.x);
+                }
+            }
+        }
+        const canFire = bullets_available > 0 && reload_time_remaining <= 0;
+        function findThreat() {
+            const HORIZON = 2.0; const MARGIN = 30;
+            let worstThreat = null; let worstDist = Infinity;
+            for (const ast of sonar) {
+                const d = wrappedDelta(position, ast.position);
+                const rv = { x: ast.velocity.x - velocity.x, y: ast.velocity.y - velocity.y };
+                const rvLen2 = rv.x * rv.x + rv.y * rv.y;
+                if (rvLen2 < 1e-8) continue;
+                const tca = -(d.x * rv.x + d.y * rv.y) / rvLen2;
+                if (tca < 0 || tca > HORIZON) continue;
+                const cx = d.x + rv.x * tca; const cy = d.y + rv.y * tca;
+                const closestDist = Math.sqrt(cx * cx + cy * cy);
+                const safeRadius = ast.radius + playerRadius + MARGIN;
+                if (closestDist < safeRadius && closestDist < worstDist) {
+                    worstDist = closestDist;
+                    worstThreat = { asteroid: ast, delta: d, tca };
+                }
+            }
+            return worstThreat;
+        }
+        const threat = findThreat();
+        const URGENT_TCA = 1.0;
+        const urgentThreat = threat && threat.tca < URGENT_TCA ? threat : null;
+        if (threat) {
+            draw.push({ type: "circle", x: threat.asteroid.position.x, y: threat.asteroid.position.y, radius: threat.asteroid.radius + 10, color: "red", filled: false, thickness: 2 });
+        }
+        if (urgentThreat) {
+            const d = urgentThreat.delta;
+            const perpA = Math.atan2(-d.x, d.y); const perpB = Math.atan2(d.x, -d.y);
+            const velAngle = Math.atan2(velocity.y, velocity.x);
+            const escapeAngle = Math.abs(normalizeAngle(perpA - velAngle)) > Math.abs(normalizeAngle(perpB - velAngle)) ? perpA : perpB;
+            commands.push({ type: "rotate", value: Math.max(-max_rotation, Math.min(max_rotation, normalizeAngle(escapeAngle - rotation))) });
+            commands.push({ type: "thrust" });
+            draw.push({ type: "circle", x: urgentThreat.asteroid.position.x, y: urgentThreat.asteroid.position.y, radius: urgentThreat.asteroid.radius + 15, color: "red", filled: true, thickness: 1 });
+        } else if (threat) {
+            const d = threat.delta;
+            const perpA = Math.atan2(-d.x, d.y); const perpB = Math.atan2(d.x, -d.y);
+            const velAngle = Math.atan2(velocity.y, velocity.x);
+            const escapeAngle = Math.abs(normalizeAngle(perpA - velAngle)) > Math.abs(normalizeAngle(perpB - velAngle)) ? perpA : perpB;
+            commands.push({ type: "rotate", value: Math.max(-max_rotation, Math.min(max_rotation, normalizeAngle(escapeAngle - rotation))) });
+            commands.push({ type: "thrust" });
+        } else if (canFire && bestTarget) {
+            const angleDiff = normalizeAngle(bestAngle - rotation);
+            const clampedDelta = Math.max(-max_rotation, Math.min(max_rotation, angleDiff));
+            commands.push({ type: "rotate", value: clampedDelta });
+            if (Math.abs(angleDiff - clampedDelta) < 0.001) { commands.push({ type: "fire" }); }
+            const td = wrappedDelta(position, bestTarget.position);
+            draw.push({ type: "circle", x: position.x + td.x, y: position.y + td.y, radius: bestTarget.radius + 5, color: "green", filled: false, thickness: 1 });
+        } else {
+            let fleeX = 0; let fleeY = 0;
+            for (const ast of sonar) {
+                const d = wrappedDelta(position, ast.position);
+                const dist2 = d.x * d.x + d.y * d.y;
+                if (dist2 < 1) continue;
+                fleeX -= d.x / dist2; fleeY -= d.y / dist2;
+            }
+            const fleeMag = Math.sqrt(fleeX * fleeX + fleeY * fleeY);
+            if (fleeMag > 1e-6) {
+                commands.push({ type: "rotate", value: Math.max(-max_rotation, Math.min(max_rotation, normalizeAngle(Math.atan2(fleeY, fleeX) - rotation))) });
+            }
+            if (currentSpeed > PATROL_SPEED) {
+                const brake = bestBrakeAction();
+                if (brake) commands.push({ type: brake });
+            } else { commands.push({ type: "thrust" }); }
+        }
+        if (mem.intercept && time < mem.intercept.expiresAt) {
+            const ip = mem.intercept;
+            draw.push({ type: "line", x1: ip.bullet.x, y1: ip.bullet.y, x2: ip.interceptPoint.x, y2: ip.interceptPoint.y, color: "cyan", thickness: 1 });
+            draw.push({ type: "circle", x: ip.interceptPoint.x, y: ip.interceptPoint.y, radius: 8, color: "yellow", filled: false, thickness: 2 });
+        } else if (mem.intercept) { mem.intercept = null; }
+        output.memory = mem;
+    }
+    "##;
+
+    interp
+        .prepare(source, Some(tsrun::ModulePath::new("firmware.ts")))
+        .unwrap();
+    interp.run_to_completion().unwrap();
+    let update_fn = api::get_export(&interp, "update").unwrap();
+
+    let root_guard = api::create_guard(&interp);
+    let input = api::create_from_json(
+        &mut interp,
+        &root_guard,
+        &serde_json::json!({
+            "globals": {
+                "time": 0.0, "screen_width": 800.0, "screen_height": 800.0,
+                "bullet_speed": 0.5, "max_rotation": 0.08
+            },
+            "properties": {
+                "position": {"x": 400.0, "y": 400.0},
+                "velocity": {"x": 0.01, "y": -0.02},
+                "rotation": -1.57,
+                "radius": 20.0,
+            },
+            "ammo": {
+                "bullets_available": 1, "max_bullets": 1,
+                "reload_time_remaining": 0.0, "reload_time": 0.5
+            },
+            "events": {"sonar": []},
+            "memory": null,
+        }),
+    )
+    .unwrap();
+
+    let output = api::create_from_json(
+        &mut interp,
+        &root_guard,
+        &serde_json::json!({"commands": [], "draw": [], "memory": null}),
+    )
+    .unwrap();
+
+    let events = api::get_property(&input, "events").unwrap();
+    let globals = api::get_property(&input, "globals").unwrap();
+    let commands = api::get_property(&output, "commands").unwrap();
+    let draw = api::get_property(&output, "draw").unwrap();
+
+    interp.collect();
+    let baseline = interp.gc_stats().live_objects;
+    println!("Baseline live objects: {}", baseline);
+
+    let mut stats_history: Vec<usize> = Vec::new();
+
+    for frame in 0..200 {
+        // Update time
+        api::set_property(&globals, "time", JsValue::from(frame as f64 * 0.016)).unwrap();
+
+        // Build sonar (like set_sonar)
+        let temp_guard = api::create_guard(&interp);
+        let sonar = api::create_array(&mut interp, &temp_guard).unwrap();
+        for i in 0..25 {
+            let pos = api::create_object_with_capacity(&mut interp, &temp_guard, 2).unwrap();
+            api::set_property(&pos, "x", JsValue::from(100.0 + (i * 30) as f64)).unwrap();
+            api::set_property(&pos, "y", JsValue::from(200.0 + (i * 25) as f64)).unwrap();
+            let vel = api::create_object_with_capacity(&mut interp, &temp_guard, 2).unwrap();
+            api::set_property(&vel, "x", JsValue::from(0.1)).unwrap();
+            api::set_property(&vel, "y", JsValue::from(-0.05)).unwrap();
+            let entry = api::create_object_with_capacity(&mut interp, &temp_guard, 4).unwrap();
+            api::set_property(&entry, "position", pos).unwrap();
+            api::set_property(&entry, "velocity", vel).unwrap();
+            api::set_property(&entry, "distance", JsValue::from(150.0 + (i * 10) as f64)).unwrap();
+            api::set_property(&entry, "radius", JsValue::from(25.0)).unwrap();
+            api::push(&sonar, entry).unwrap();
+        }
+        api::set_property(&events, "sonar", sonar).unwrap();
+        drop(temp_guard);
+
+        // Reset output
+        api::set_property(&commands, "length", JsValue::from(0)).unwrap();
+        api::set_property(&draw, "length", JsValue::from(0)).unwrap();
+
+        // Transfer memory
+        let memory = api::get_property(&output, "memory").unwrap();
+        api::set_property(&input, "memory", memory).unwrap();
+
+        // Call firmware
+        let call_guard = api::create_guard(&interp);
+        let _result = api::call_function(
+            &mut interp,
+            &call_guard,
+            &update_fn,
+            None,
+            &[input.clone(), output.clone()],
+        )
+        .unwrap();
+
+        if frame % 20 == 19 {
+            interp.collect();
+            let stats = interp.gc_stats();
+            stats_history.push(stats.live_objects);
+            println!(
+                "Frame {}: total={}, pooled={}, live={}",
+                frame, stats.total_objects, stats.pooled_objects, stats.live_objects
+            );
+        }
+    }
+
+    interp.collect();
+    let final_stats = interp.gc_stats();
+    println!(
+        "Final: total={}, pooled={}, live={}",
+        final_stats.total_objects, final_stats.pooled_objects, final_stats.live_objects
+    );
+
+    let overhead = final_stats.live_objects.saturating_sub(baseline);
+    assert!(
+        overhead < 500,
+        "Real firmware leaked: {} objects over baseline. History: {:?}",
+        overhead,
+        stats_history,
+    );
+
+    if stats_history.len() >= 2 {
+        let first = stats_history[0];
+        let last = stats_history[stats_history.len() - 1];
+        let growth = last.saturating_sub(first);
+        assert!(
+            growth < 200,
+            "Live objects growing: first={}, last={}, growth={}. History: {:?}",
+            first,
+            last,
+            growth,
+            stats_history,
+        );
+    }
+}
+
+/// Minimal test to isolate the env_guards leak.
+#[test]
+fn test_env_guards_leak_minimal() {
+    let mut interp = Interpreter::new();
+
+    // Minimal reproduction: continue inside for-of leaks scopes
+    let source = r##"
+    export function update(input, output) {
+        const { time, screen_width, screen_height, bullet_speed, max_rotation } = input.globals;
+        const { position, velocity, rotation, radius: playerRadius } = input.properties;
+        const { bullets_available, reload_time_remaining } = input.ammo;
+        const { sonar } = input.events;
+        const mem = input.memory || {};
+        const commands = output.commands;
+        const draw = output.draw;
+        const currentSpeed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+        const PATROL_SPEED = 0.05;
+        const ATTACK_THRUST_MIN_DIST = 400;
+        const ATTACK_MAX_SPEED = 0.10;
+        if (sonar.length === 0) { output.memory = mem; return; }
+        function wrappedDelta(from, to) {
+            let dx = to.x - from.x; let dy = to.y - from.y;
+            if (dx > screen_width / 2) dx -= screen_width;
+            if (dx < -screen_width / 2) dx += screen_width;
+            if (dy > screen_height / 2) dy -= screen_height;
+            if (dy < -screen_height / 2) dy += screen_height;
+            return { x: dx, y: dy };
+        }
+        function interceptTime(ast) {
+            const d = wrappedDelta(position, ast.position);
+            const vr = { x: ast.velocity.x - velocity.x, y: ast.velocity.y - velocity.y };
+            const a = vr.x * vr.x + vr.y * vr.y - bullet_speed * bullet_speed;
+            const b = 2 * (d.x * vr.x + d.y * vr.y);
+            const c = d.x * d.x + d.y * d.y;
+            const disc = b * b - 4 * a * c;
+            if (disc < 0) return -1;
+            const sq = Math.sqrt(disc);
+            if (Math.abs(a) < 1e-6) { const t = -c / b; return t > 0 ? t : -1; }
+            const t1 = (-b - sq) / (2 * a); const t2 = (-b + sq) / (2 * a);
+            if (t1 > 0 && t2 > 0) return Math.min(t1, t2);
+            if (t1 > 0) return t1; if (t2 > 0) return t2; return -1;
+        }
+        function normalizeAngle(a) {
+            while (a > Math.PI) a -= 2 * Math.PI;
+            while (a < -Math.PI) a += 2 * Math.PI;
+            return a;
+        }
+        function bestBrakeAction() {
+            if (currentSpeed < 0.01) return null;
+            const thrustDotVel = Math.cos(rotation) * velocity.x + Math.sin(rotation) * velocity.y;
+            if (thrustDotVel > 0) return "reverse_thrust";
+            if (thrustDotVel < 0) return "thrust";
+            return null;
+        }
+        let bestTarget = null; let bestTime = Infinity; let bestAngle = 0;
+        for (const ast of sonar) {
+            const t = interceptTime(ast);
+            if (t > 0 && t < bestTime) {
+                bestTime = t; bestTarget = ast;
+                const d = wrappedDelta(position, ast.position);
+                bestAngle = Math.atan2(d.y + ast.velocity.y * t, d.x + ast.velocity.x * t);
+            }
+        }
+        if (!bestTarget) {
+            let nearestDist = Infinity;
+            for (const ast of sonar) {
+                if (ast.distance < nearestDist) {
+                    nearestDist = ast.distance; bestTarget = ast;
+                    const d = wrappedDelta(position, ast.position);
+                    bestAngle = Math.atan2(d.y, d.x);
+                }
+            }
+        }
+        const canFire = bullets_available > 0 && reload_time_remaining <= 0;
+        function findThreat() {
+            const HORIZON = 2.0; const MARGIN = 30;
+            let worstThreat = null; let worstDist = Infinity;
+            for (const ast of sonar) {
+                const d = wrappedDelta(position, ast.position);
+                const rv = { x: ast.velocity.x - velocity.x, y: ast.velocity.y - velocity.y };
+                const rvLen2 = rv.x * rv.x + rv.y * rv.y;
+                if (rvLen2 < 1e-8) continue;
+                const tca = -(d.x * rv.x + d.y * rv.y) / rvLen2;
+                if (tca < 0 || tca > HORIZON) continue;
+                const cx = d.x + rv.x * tca; const cy = d.y + rv.y * tca;
+                const closestDist = Math.sqrt(cx * cx + cy * cy);
+                const safeRadius = ast.radius + playerRadius + MARGIN;
+                if (closestDist < safeRadius && closestDist < worstDist) {
+                    worstDist = closestDist;
+                    worstThreat = { asteroid: ast, delta: d, tca };
+                }
+            }
+            return worstThreat;
+        }
+        const threat = findThreat();
+        const URGENT_TCA = 1.0;
+        const urgentThreat = threat && threat.tca < URGENT_TCA ? threat : null;
+        if (threat) {
+            draw.push({ type: "circle", x: threat.asteroid.position.x, y: threat.asteroid.position.y, radius: threat.asteroid.radius + 10, color: "red", filled: false, thickness: 2 });
+        }
+        if (urgentThreat) {
+            const d = urgentThreat.delta;
+            const perpA = Math.atan2(-d.x, d.y); const perpB = Math.atan2(d.x, -d.y);
+            const velAngle = Math.atan2(velocity.y, velocity.x);
+            const escapeAngle = Math.abs(normalizeAngle(perpA - velAngle)) > Math.abs(normalizeAngle(perpB - velAngle)) ? perpA : perpB;
+            commands.push({ type: "rotate", value: Math.max(-max_rotation, Math.min(max_rotation, normalizeAngle(escapeAngle - rotation))) });
+            commands.push({ type: "thrust" });
+            draw.push({ type: "circle", x: urgentThreat.asteroid.position.x, y: urgentThreat.asteroid.position.y, radius: urgentThreat.asteroid.radius + 15, color: "red", filled: true, thickness: 1 });
+        } else if (threat) {
+            const d = threat.delta;
+            const perpA = Math.atan2(-d.x, d.y); const perpB = Math.atan2(d.x, -d.y);
+            const velAngle = Math.atan2(velocity.y, velocity.x);
+            const escapeAngle = Math.abs(normalizeAngle(perpA - velAngle)) > Math.abs(normalizeAngle(perpB - velAngle)) ? perpA : perpB;
+            commands.push({ type: "rotate", value: Math.max(-max_rotation, Math.min(max_rotation, normalizeAngle(escapeAngle - rotation))) });
+            commands.push({ type: "thrust" });
+        } else if (canFire && bestTarget) {
+            const angleDiff = normalizeAngle(bestAngle - rotation);
+            const clampedDelta = Math.max(-max_rotation, Math.min(max_rotation, angleDiff));
+            commands.push({ type: "rotate", value: clampedDelta });
+            if (Math.abs(angleDiff - clampedDelta) < 0.001) { commands.push({ type: "fire" }); }
+            const td = wrappedDelta(position, bestTarget.position);
+            draw.push({ type: "circle", x: position.x + td.x, y: position.y + td.y, radius: bestTarget.radius + 5, color: "green", filled: false, thickness: 1 });
+        } else {
+            let fleeX = 0; let fleeY = 0;
+            for (const ast of sonar) {
+                const d = wrappedDelta(position, ast.position);
+                const dist2 = d.x * d.x + d.y * d.y;
+                if (dist2 < 1) continue;
+                fleeX -= d.x / dist2; fleeY -= d.y / dist2;
+            }
+            const fleeMag = Math.sqrt(fleeX * fleeX + fleeY * fleeY);
+            if (fleeMag > 1e-6) {
+                commands.push({ type: "rotate", value: Math.max(-max_rotation, Math.min(max_rotation, normalizeAngle(Math.atan2(fleeY, fleeX) - rotation))) });
+            }
+            if (currentSpeed > PATROL_SPEED) {
+                const brake = bestBrakeAction();
+                if (brake) commands.push({ type: brake });
+            } else { commands.push({ type: "thrust" }); }
+        }
+        if (mem.intercept && time < mem.intercept.expiresAt) {
+            const ip = mem.intercept;
+            draw.push({ type: "line", x1: ip.bullet.x, y1: ip.bullet.y, x2: ip.interceptPoint.x, y2: ip.interceptPoint.y, color: "cyan", thickness: 1 });
+            draw.push({ type: "circle", x: ip.interceptPoint.x, y: ip.interceptPoint.y, radius: 8, color: "yellow", filled: false, thickness: 2 });
+        } else if (mem.intercept) { mem.intercept = null; }
+        output.memory = mem;
+    }
+    "##;
+
+    interp
+        .prepare(source, Some(tsrun::ModulePath::new("firmware.ts")))
+        .unwrap();
+    interp.run_to_completion().unwrap();
+    let update_fn = api::get_export(&interp, "update").unwrap();
+
+    let root_guard = api::create_guard(&interp);
+    let input = api::create_from_json(
+        &mut interp,
+        &root_guard,
+        &serde_json::json!({
+            "globals": {
+                "time": 0.0, "screen_width": 800.0, "screen_height": 800.0,
+                "bullet_speed": 0.5, "max_rotation": 0.08
+            },
+            "properties": {
+                "position": {"x": 400.0, "y": 400.0},
+                "velocity": {"x": 0.01, "y": -0.02},
+                "rotation": -1.57,
+                "radius": 20.0,
+            },
+            "ammo": {"bullets_available": 1, "reload_time_remaining": 0.0},
+            "events": {"sonar": []},
+            "memory": null,
+        }),
+    )
+    .unwrap();
+    let output = api::create_from_json(
+        &mut interp,
+        &root_guard,
+        &serde_json::json!({"commands": [], "draw": [], "memory": null}),
+    )
+    .unwrap();
+    let events = api::get_property(&input, "events").unwrap();
+
+    // Build sonar with 5 entries
+    let temp_guard = api::create_guard(&interp);
+    let sonar = api::create_array(&mut interp, &temp_guard).unwrap();
+    for i in 0..5 {
+        let pos = api::create_object_with_capacity(&mut interp, &temp_guard, 2).unwrap();
+        api::set_property(&pos, "x", JsValue::from(100.0 + (i * 30) as f64)).unwrap();
+        api::set_property(&pos, "y", JsValue::from(200.0 + (i * 25) as f64)).unwrap();
+        let vel = api::create_object_with_capacity(&mut interp, &temp_guard, 2).unwrap();
+        api::set_property(&vel, "x", JsValue::from(0.1)).unwrap();
+        api::set_property(&vel, "y", JsValue::from(-0.05)).unwrap();
+        let entry = api::create_object_with_capacity(&mut interp, &temp_guard, 4).unwrap();
+        api::set_property(&entry, "position", pos).unwrap();
+        api::set_property(&entry, "velocity", vel).unwrap();
+        api::set_property(&entry, "distance", JsValue::from(150.0)).unwrap();
+        api::set_property(&entry, "radius", JsValue::from(25.0)).unwrap();
+        api::push(&sonar, entry).unwrap();
+    }
+    api::set_property(&events, "sonar", sonar).unwrap();
+
+    let before = interp.env_guards_len();
+    println!("env_guards before call: {}", before);
+
+    let call_guard2 = api::create_guard(&interp);
+    let _result = api::call_function(
+        &mut interp,
+        &call_guard2,
+        &update_fn,
+        None,
+        &[input.clone(), output.clone()],
+    )
+    .unwrap();
+
+    let after = interp.env_guards_len();
+    println!("env_guards after call: {}", after);
+
+    assert_eq!(
+        before,
+        after,
+        "env_guards leaked {} guards during a single call_function",
+        after - before
+    );
+}
+
+/// Proves that `continue` inside a for-of loop leaks env_guards.
+#[test]
+fn test_continue_in_for_of_leaks_env_guards() {
+    let mut interp = Interpreter::new();
+
+    let source = r#"
+        export function run(arr) {
+            let count = 0;
+            for (const x of arr) {
+                if (x < 3) continue;
+                count += x;
+            }
+            return count;
+        }
+    "#;
+
+    interp
+        .prepare(source, Some(tsrun::ModulePath::new("test.ts")))
+        .unwrap();
+    interp.run_to_completion().unwrap();
+    let run_fn = api::get_export(&interp, "run").unwrap();
+
+    let call_guard = api::create_guard(&interp);
+    let arr = api::create_from_json(
+        &mut interp,
+        &call_guard,
+        &serde_json::json!([1, 2, 3, 4, 5]),
+    )
+    .unwrap();
+
+    let before = interp.env_guards_len();
+    let _result = api::call_function(&mut interp, &call_guard, &run_fn, None, &[arr]).unwrap();
+    let after = interp.env_guards_len();
+
+    println!("env_guards before: {}, after: {}", before, after);
+    assert_eq!(
+        before,
+        after,
+        "continue in for-of leaked {} env_guards",
+        after - before
     );
 }

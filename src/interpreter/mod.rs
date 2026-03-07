@@ -756,6 +756,11 @@ impl Interpreter {
         self.heap.collect();
     }
 
+    /// Get the number of env_guards (for debugging/testing)
+    pub fn env_guards_len(&self) -> usize {
+        self.env_guards.len()
+    }
+
     /// Get GC statistics
     pub fn gc_stats(&self) -> crate::gc::GcStats {
         self.heap.stats()

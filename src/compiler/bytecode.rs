@@ -253,11 +253,21 @@ pub enum Op {
 
     /// Break to target (runs finally blocks first)
     /// try_depth is the try stack depth at the target loop
-    Break { target: JumpTarget, try_depth: u8 },
+    /// scope_depth is the saved_env_stack depth to unwind to
+    Break {
+        target: JumpTarget,
+        try_depth: u8,
+        scope_depth: u32,
+    },
 
     /// Continue to target (runs finally blocks first)
     /// try_depth is the try stack depth at the target loop
-    Continue { target: JumpTarget, try_depth: u8 },
+    /// scope_depth is the saved_env_stack depth to unwind to
+    Continue {
+        target: JumpTarget,
+        try_depth: u8,
+        scope_depth: u32,
+    },
 
     // ═══════════════════════════════════════════════════════════════════════════════
     // Variable Access
