@@ -676,6 +676,30 @@ const userSchema: FieldSchema[] = [
 userSchema
 ```
 
+## Development Setup
+
+This project uses [lefthook](https://github.com/evilmartians/lefthook) to run CI checks before each commit.
+
+### Install lefthook
+
+```bash
+# macOS
+brew install lefthook
+
+# or via Go
+go install github.com/evilmartians/lefthook@latest
+
+# or download binary from https://github.com/evilmartians/lefthook/releases
+```
+
+### Activate hooks
+
+```bash
+lefthook install
+```
+
+This installs a `pre-commit` hook that runs formatting, linting, build, and tests — the same checks as CI. To bypass temporarily: `git commit --no-verify`.
+
 ## Testing
 
 ```bash
